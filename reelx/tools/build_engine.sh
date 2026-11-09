@@ -82,7 +82,7 @@ if [[ $tests -eq 1 ]]; then
   [[ "$(uname -m)" == arm64 ]] || out="$src/out/host_debug"
   "$out/ui_unittests" --gtest_filter='Reelx*:ImageEncoding*'
   "$out/impeller_unittests" --gtest_filter='*Reelx*:*Snapshot*'
-  "$root/reelx/tools/test/run_all.sh"
+  REELX_ENGINE_OUT="$src/out" "$root/reelx/tools/test/run_all.sh"
 fi
 
 echo "built: $src/out"
