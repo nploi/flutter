@@ -5,4 +5,5 @@
   kDartSnapshotText;
   InternalFlutterGpu*;
   kInternalFlutterGpu*;
+  Reelx*;
 };
