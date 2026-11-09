@@ -4,6 +4,8 @@
 
 #include "flutter/lib/ui/reelx/reelx_ffi.h"
 
+#include <unistd.h>
+
 #include <string>
 
 #include "gtest/gtest.h"
@@ -78,6 +80,28 @@ TEST_F(ReelxFfiTest, StatsAreCountedAndReported) {
   EXPECT_NE(info.find("\"targetPoolHits\":2"), std::string::npos) << info;
   EXPECT_NE(info.find("\"readbackPoolMisses\":1"), std::string::npos) << info;
   EXPECT_NE(info.find("\"targetPoolMisses\":0"), std::string::npos) << info;
+}
+
+// P4: what the hand-off decides before any image or Dart port is involved
+// (the readback path is covered by Reelx's gated export suite on the
+// patched engine).
+TEST_F(ReelxFfiTest, HandoffRepeatNeedsAFrameFirst) {
+  SetAvailableForTesting(Feature::kFdHandoff, true);
+  int fds[2];
+  ASSERT_EQ(pipe(fds), 0);
+  EXPECT_EQ(ReelxRepeatLastToFd(fds[1], /*port=*/0, /*token=*/1), -4);
+  EXPECT_EQ(ReelxReleaseFd(fds[1]), 0);
+  close(fds[0]);
+  close(fds[1]);
+}
+
+TEST_F(ReelxFfiTest, HandoffIsRefusedWhileTheFeatureIsOff) {
+  SetAvailableForTesting(Feature::kFdHandoff, false);
+  EXPECT_EQ(ReelxRepeatLastToFd(3, /*port=*/0, /*token=*/1), -1);
+}
+
+TEST_F(ReelxFfiTest, ReleasingAnUnknownDescriptorIsFine) {
+  EXPECT_EQ(ReelxReleaseFd(12345), 0);
 }
 
 }  // namespace testing
