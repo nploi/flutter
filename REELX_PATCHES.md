@@ -23,10 +23,11 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 ## P0 — Engine info and feature switches
 
 - **Why**: Reelx must know whether it runs on this engine and which features to use, and must be able to switch any of them off per export without a new release.
-- **Files**: _pending_
-- **Tests**: _pending_
-- **Verify**: _pending_
-- **Feature**: none (adds `ReelxEngineInfo`, `ReelxSetFeature`)
+- **Files**: `engine/src/flutter/lib/ui/reelx/reelx_ffi.{h,cc}` (C API + flags + counters), `lib/ui/BUILD.gn` (sources, test), `common/exported{,_test}_symbols{,_mac}.sym` (`Reelx*` exported like `InternalFlutterGpu*`), `.gitignore` (generated `reelx_build_info.h`), `reelx/tools/build_engine.sh` (writes it).
+- **Tests**: `lib/ui/reelx/reelx_ffi_unittests.cc` (`ReelxFfiTest.*` in `ui_unittests`); `nm -gU` shows `_ReelxEngineInfo` and `_ReelxSetFeature` in `FlutterMacOS.framework` and `flutter_tester`.
+- **Verify**: `ui_unittests --gtest_filter='ReelxFfiTest.*'`; `nm -gU out/host_debug_arm64/flutter_tester | grep Reelx`; the editor's export log shows `REELX_ENGINE {"patchSet":...}`.
+- **Feature**: none (adds `ReelxEngineInfo`, `ReelxSetFeature`; `-2` means the feature isn't in this build)
+- **Note**: patching `engine/src/flutter` changes the engine content hash, so this checkout can't serve as a Flutter SDK (it would look for artifacts that don't exist). Apps build with the stock SDK and get this engine by framework swap.
 
 ## P1 — Lazy mipmaps for snapshots
 
