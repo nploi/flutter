@@ -4,15 +4,22 @@
 
 // Reelx P1 (lazy mipmaps) and P3 (lossless snapshot targets).
 
+#include <cstring>
+#include <vector>
+
 #include "flutter/display_list/dl_builder.h"
 #include "flutter/display_list/dl_paint.h"
 #include "flutter/impeller/display_list/aiks_unittests.h"
+#include "fml/synchronization/count_down_latch.h"
 #include "gtest/gtest.h"
+#include "impeller/core/device_buffer.h"
 #include "impeller/core/sampler_descriptor.h"
 #include "impeller/core/texture_descriptor.h"
 #include "impeller/display_list/aiks_context.h"
 #include "impeller/display_list/dl_dispatcher.h"
+#include "impeller/display_list/dl_image_impeller.h"
 #include "impeller/display_list/lazy_mipmaps.h"
+#include "impeller/renderer/command_buffer.h"
 
 namespace impeller {
 namespace testing {
@@ -34,6 +41,63 @@ SamplerDescriptor Sampler(MipFilter mip_filter) {
   desc.min_filter = desc.mag_filter = MinMagFilter::kLinear;
   desc.mip_filter = mip_filter;
   return desc;
+}
+
+// Stripes 3 px wide (a period of 6, which 8 doesn't divide): drawn at 1/8
+// they blend smoothly with mipmaps and alias without them.
+sk_sp<flutter::DisplayList> Stripes() {
+  flutter::DisplayListBuilder builder;
+  flutter::DlPaint paint;
+  paint.setColor(flutter::DlColor::kBlack());
+  builder.DrawRect(flutter::DlRect::MakeWH(256, 256), paint);
+  paint.setColor(flutter::DlColor::kWhite());
+  for (int x = 0; x < 256; x += 6) {
+    builder.DrawRect(flutter::DlRect::MakeXYWH(x, 0, 3, 256), paint);
+  }
+  return builder.Build();
+}
+
+std::vector<uint8_t> ReadBack(const std::shared_ptr<Context>& context,
+                              const std::shared_ptr<Texture>& texture) {
+  DeviceBufferDescriptor desc;
+  desc.size = texture->GetTextureDescriptor().GetByteSizeOfBaseMipLevel();
+  desc.readback = true;
+  desc.storage_mode = StorageMode::kHostVisible;
+  auto buffer = context->GetResourceAllocator()->CreateBuffer(desc);
+  auto cmd_buffer = context->CreateCommandBuffer();
+  auto blit_pass = cmd_buffer->CreateBlitPass();
+  blit_pass->AddCopy(texture, buffer);
+  blit_pass->EncodeCommands();
+  auto latch = std::make_shared<fml::CountDownLatch>(1u);
+  context->GetCommandQueue()->Submit(
+      {cmd_buffer},
+      [latch](CommandBuffer::Status status) { latch->CountDown(); });
+  latch->Wait();
+  buffer->Invalidate();
+  const uint8_t* bytes = buffer->OnGetContents();
+  return std::vector<uint8_t>(bytes, bytes + desc.size);
+}
+
+// [image] drawn at 32 x 32 with [sampling], read back.
+std::vector<uint8_t> DrawnSmall(const std::shared_ptr<Context>& context,
+                                AiksContext& renderer,
+                                const std::shared_ptr<Texture>& image,
+                                flutter::DlImageSampling sampling) {
+  flutter::DisplayListBuilder builder;
+  builder.DrawImageRect(DlImageImpeller::Make(image),
+                        flutter::DlRect::MakeWH(256, 256),
+                        flutter::DlRect::MakeWH(32, 32), sampling);
+  auto small = DisplayListToTexture(builder.Build(), {32, 32}, renderer);
+  return ReadBack(context, small);
+}
+
+int MaxDifference(const std::vector<uint8_t>& a,
+                  const std::vector<uint8_t>& b) {
+  int most = a.size() == b.size() ? 0 : 255;
+  for (size_t i = 0; i < a.size() && i < b.size(); i++) {
+    most = std::max(most, std::abs(static_cast<int>(a[i]) - b[i]));
+  }
+  return most;
 }
 
 }  // namespace
@@ -150,6 +214,32 @@ TEST_P(AiksTest, ReelxMipmappedTargetsAreNotPooled) {
                                       /*pooled_target=*/true, &hit);
   ASSERT_TRUE(texture);
   EXPECT_TRUE(renderer.GetContentContext().GetSnapshotTargetPool().empty());
+}
+
+// P1: a lazily mipmapped snapshot drawn at 1/8 with mipmaps gives the same
+// pixels as one whose mipmaps were made when it was rendered.
+TEST_P(AiksTest, ReelxLazyMipmapsDrawLikeEagerOnes) {
+  AiksContext renderer(GetContext(), nullptr);
+  auto eager = DisplayListToTexture(Stripes(), {256, 256}, renderer,
+                                    /*reset_host_buffer=*/true,
+                                    /*generate_mips=*/true);
+  auto lazy = DisplayListToTexture(Stripes(), {256, 256}, renderer,
+                                   /*reset_host_buffer=*/true,
+                                   /*generate_mips=*/false);
+  ASSERT_TRUE(eager && lazy);
+  lazy->SetWantsLazyMipmaps(true);
+
+  auto from_eager = DrawnSmall(GetContext(), renderer, eager,
+                               flutter::DlImageSampling::kMipmapLinear);
+  auto from_lazy = DrawnSmall(GetContext(), renderer, lazy,
+                              flutter::DlImageSampling::kMipmapLinear);
+  EXPECT_NE(lazy->GetLazyMipmapped(), nullptr);
+  EXPECT_LE(MaxDifference(from_eager, from_lazy), 1);
+
+  // The mipmaps matter here: without them the stripes alias.
+  auto unfiltered = DrawnSmall(GetContext(), renderer, eager,
+                               flutter::DlImageSampling::kLinear);
+  EXPECT_GT(MaxDifference(from_eager, unfiltered), 8);
 }
 
 }  // namespace testing
