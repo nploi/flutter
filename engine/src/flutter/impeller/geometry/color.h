@@ -51,7 +51,14 @@ namespace impeller {
 
 struct Vector4;
 
-enum class YUVColorSpace { kBT601LimitedRange, kBT601FullRange };
+// Reelx P5 adds the BT.709 spaces after the existing ones, keeping their
+// values (the YUV shader reads the value as a float).
+enum class YUVColorSpace {
+  kBT601LimitedRange,
+  kBT601FullRange,
+  kBT709LimitedRange,
+  kBT709FullRange,
+};
 
 /// All blend modes assume that both the source (fragment output) and
 /// destination (first color attachment) have colors with premultiplied alpha.

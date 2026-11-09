@@ -4,6 +4,7 @@
 
 #include "impeller/entity/contents/filters/yuv_to_rgb_filter_contents.h"
 
+#include "flutter/fml/logging.h"
 #include "impeller/core/formats.h"
 #include "impeller/entity/contents/anonymous_contents.h"
 #include "impeller/entity/contents/content_context.h"
@@ -27,11 +28,46 @@ constexpr Matrix kMatrixBT601FullRange = {
     1.402, -0.714,   0.0, 0.0,
       0.0,    0.0,   0.0, 1.0
 };
+
+// Reelx P5: BT.709 (Kr 0.2126, Kb 0.0722); limited range scales luma by
+// 255/219 and chroma by 255/224.
+constexpr Matrix kMatrixBT709LimitedRange = {
+    1.16438,  1.16438, 1.16438, 0.0,
+        0.0, -0.21325, 2.11240, 0.0,
+    1.79274, -0.53291,     0.0, 0.0,
+        0.0,      0.0,     0.0, 1.0
+};
+
+constexpr Matrix kMatrixBT709FullRange = {
+      1.0,      1.0,    1.0, 0.0,
+      0.0, -0.18733, 1.8556, 0.0,
+   1.5748, -0.46812,    0.0, 0.0,
+      0.0,      0.0,    0.0, 1.0
+};
 // clang-format on
 
 YUVToRGBFilterContents::YUVToRGBFilterContents() = default;
 
 YUVToRGBFilterContents::~YUVToRGBFilterContents() = default;
+
+Matrix YUVToRGBFilterContents::MatrixFor(YUVColorSpace yuv_color_space) {
+  switch (yuv_color_space) {
+    case YUVColorSpace::kBT601LimitedRange:
+      return kMatrixBT601LimitedRange;
+    case YUVColorSpace::kBT601FullRange:
+      return kMatrixBT601FullRange;
+    case YUVColorSpace::kBT709LimitedRange:
+      return kMatrixBT709LimitedRange;
+    case YUVColorSpace::kBT709FullRange:
+      return kMatrixBT709FullRange;
+  }
+  FML_UNREACHABLE();
+}
+
+bool YUVToRGBFilterContents::IsLimitedRange(YUVColorSpace yuv_color_space) {
+  return yuv_color_space == YUVColorSpace::kBT601LimitedRange ||
+         yuv_color_space == YUVColorSpace::kBT709LimitedRange;
+}
 
 void YUVToRGBFilterContents::SetYUVColorSpace(YUVColorSpace yuv_color_space) {
   yuv_color_space_ = yuv_color_space;
@@ -98,15 +134,10 @@ std::optional<Entity> YUVToRGBFilterContents::RenderFilter(
             Matrix::MakeScale(Vector2(size)));
 
     FS::FragInfo frag_info;
-    frag_info.yuv_color_space = static_cast<Scalar>(yuv_color_space);
-    switch (yuv_color_space) {
-      case YUVColorSpace::kBT601LimitedRange:
-        frag_info.matrix = kMatrixBT601LimitedRange;
-        break;
-      case YUVColorSpace::kBT601FullRange:
-        frag_info.matrix = kMatrixBT601FullRange;
-        break;
-    }
+    // The shader removes 16/255 from luma when this is 0 (limited range).
+    frag_info.yuv_color_space =
+        IsLimitedRange(yuv_color_space) ? 0.0f : 1.0f;
+    frag_info.matrix = MatrixFor(yuv_color_space);
 
     raw_ptr<const Sampler> sampler =
         renderer.GetContext()->GetSamplerLibrary()->GetSampler({});

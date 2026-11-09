@@ -17,6 +17,13 @@ class YUVToRGBFilterContents final : public FilterContents {
 
   void SetYUVColorSpace(YUVColorSpace yuv_color_space);
 
+  /// The matrix the shader applies to (Y, Cb, Cr) after removing the
+  /// space's offsets: Y - 16/255 in limited range, Cb/Cr - 0.5.
+  static Matrix MatrixFor(YUVColorSpace yuv_color_space);
+
+  /// Whether [yuv_color_space] is limited (video) range.
+  static bool IsLimitedRange(YUVColorSpace yuv_color_space);
+
  private:
   // |FilterContents|
   std::optional<Entity> RenderFilter(

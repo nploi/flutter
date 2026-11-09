@@ -79,11 +79,21 @@ sk_sp<DlImage> EmbedderExternalTextureMetal::ResolveTexture(int64_t texture_id,
         if (ValidNumTextures(2, texture->num_textures)) {
           id<MTLTexture> yTex = (__bridge id<MTLTexture>)texture->textures[0];
           id<MTLTexture> uvTex = (__bridge id<MTLTexture>)texture->textures[1];
-          impeller::YUVColorSpace colorSpace =
-              texture->yuv_color_space ==
-                      FlutterMetalExternalTextureYUVColorSpace::kBT601LimitedRange
-                  ? impeller::YUVColorSpace::kBT601LimitedRange
-                  : impeller::YUVColorSpace::kBT601FullRange;
+          impeller::YUVColorSpace colorSpace;
+          switch (texture->yuv_color_space) {
+            case FlutterMetalExternalTextureYUVColorSpace::kBT601LimitedRange:
+              colorSpace = impeller::YUVColorSpace::kBT601LimitedRange;
+              break;
+            case FlutterMetalExternalTextureYUVColorSpace::kBT709LimitedRange:
+              colorSpace = impeller::YUVColorSpace::kBT709LimitedRange;
+              break;
+            case FlutterMetalExternalTextureYUVColorSpace::kBT709FullRange:
+              colorSpace = impeller::YUVColorSpace::kBT709FullRange;
+              break;
+            default:
+              colorSpace = impeller::YUVColorSpace::kBT601FullRange;
+              break;
+          }
           return [FlutterDarwinExternalTextureImpellerImageWrapper wrapYUVATexture:yTex
                                                                              UVTex:uvTex
                                                                      YUVColorSpace:colorSpace
@@ -112,10 +122,21 @@ sk_sp<DlImage> EmbedderExternalTextureMetal::ResolveTexture(int64_t texture_id,
       if (ValidNumTextures(2, texture->num_textures)) {
         id<MTLTexture> yTex = (__bridge id<MTLTexture>)texture->textures[0];
         id<MTLTexture> uvTex = (__bridge id<MTLTexture>)texture->textures[1];
-        SkYUVColorSpace colorSpace =
-            texture->yuv_color_space == FlutterMetalExternalTextureYUVColorSpace::kBT601LimitedRange
-                ? kRec601_Limited_SkYUVColorSpace
-                : kJPEG_Full_SkYUVColorSpace;
+        SkYUVColorSpace colorSpace;
+        switch (texture->yuv_color_space) {
+          case FlutterMetalExternalTextureYUVColorSpace::kBT601LimitedRange:
+            colorSpace = kRec601_Limited_SkYUVColorSpace;
+            break;
+          case FlutterMetalExternalTextureYUVColorSpace::kBT709LimitedRange:
+            colorSpace = kRec709_Limited_SkYUVColorSpace;
+            break;
+          case FlutterMetalExternalTextureYUVColorSpace::kBT709FullRange:
+            colorSpace = kRec709_Full_SkYUVColorSpace;
+            break;
+          default:
+            colorSpace = kJPEG_Full_SkYUVColorSpace;
+            break;
+        }
         image = [FlutterDarwinExternalTextureSkImageWrapper wrapYUVATexture:yTex
                                                                       UVTex:uvTex
                                                               YUVColorSpace:colorSpace
