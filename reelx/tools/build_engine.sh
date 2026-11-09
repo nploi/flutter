@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Builds the Reelx engine on a Mac: universal release and profile
+# FlutterMacOS.framework, and flutter_tester for local-engine CLI renders.
+#
+# Usage (from anywhere inside this checkout, depot_tools on PATH):
+#   reelx/tools/build_engine.sh [--sync] [--skip-tests] [--jobs N]
+#
+# Outputs under engine/src/out/:
+#   host_{release,profile,debug}{,_arm64}/      per-cpu builds
+#   mac_release_universal/FlutterMacOS.framework
+#   mac_profile_universal/FlutterMacOS.framework
+# Then run reelx/tools/package_artifacts.sh --out-dir engine/src/out ...
+set -euo pipefail
+
+die() { echo "build_engine: $*" >&2; exit 1; }
+
+sync=0 tests=1 jobs=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sync) sync=1; shift ;;
+    --skip-tests) tests=0; shift ;;
+    --jobs) jobs="-j $2"; shift 2 ;;
+    *) die "unknown argument $1" ;;
+  esac
+done
+
+[[ "$(uname -s)" == Darwin ]] || die "the macOS engine builds on a Mac"
+command -v gclient >/dev/null || die "depot_tools (gclient) is not on PATH"
+command -v ninja >/dev/null || die "ninja (from depot_tools) is not on PATH"
+
+root="$(git rev-parse --show-toplevel)"
+src="$root/engine/src"
+cd "$root"
+
+# The monorepo is its own gclient solution ("." in standard.gclient); the
+# url only matters for a fresh checkout, so this checkout is used as is.
+if [[ ! -f .gclient ]]; then
+  cp engine/scripts/standard.gclient .gclient
+fi
+if [[ $sync -eq 1 || ! -d "$src/flutter/third_party/dart" ]]; then
+  gclient sync -D
+fi
+
+gn="$src/flutter/tools/gn"
+# build <out-dir-name> <gn flags...>: configure, then build ${targets[@]}.
+build() {
+  local out="$1"; shift
+  "$gn" "$@"
+  # shellcheck disable=SC2086
+  ninja -C "$src/out/$out" $jobs "${targets[@]}"
+}
+
+for mode in release profile; do
+  targets=(flutter/shell/platform/darwin/macos:flutter_framework)
+  build "host_$mode" --runtime-mode "$mode" --mac-cpu x64
+  build "host_${mode}_arm64" --runtime-mode "$mode" --mac-cpu arm64
+  python3 "$src/flutter/sky/tools/create_macos_framework.py" \
+    --dst "$src/out/mac_${mode}_universal" \
+    --x64-out-dir "$src/out/host_$mode" \
+    --arm64-out-dir "$src/out/host_${mode}_arm64" \
+    --dsym --strip
+done
+
+# flutter_tester (and its patched SDK) for both cpus.
+targets=(flutter/shell/testing:testing flutter/lib/snapshot:kernel_platform_files
+  flutter:unittests)
+build host_debug --runtime-mode debug --mac-cpu x64
+build host_debug_arm64 --runtime-mode debug --mac-cpu arm64
+
+if [[ $tests -eq 1 ]]; then
+  out="$src/out/host_debug_arm64"
+  [[ "$(uname -m)" == arm64 ]] || out="$src/out/host_debug"
+  "$out/ui_unittests" --gtest_filter='Reelx*:ImageEncoding*'
+  "$out/impeller_unittests" --gtest_filter='*Reelx*:*Snapshot*'
+  "$root/reelx/tools/test/run_all.sh"
+fi
+
+echo "built: $src/out"
