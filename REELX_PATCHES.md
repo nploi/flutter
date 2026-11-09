@@ -31,7 +31,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 
 ## P1 — Lazy mipmaps for snapshots
 
-- **Status**: written on `engine-perf/3.47.7-wip`, not yet built.
+- **Status**: on `engine-perf/3.47.7-wip`; built and tested on Linux (host_debug_unopt, 2026-11-09): `Play/AiksTest.Reelx*` pass on OpenGLES (Vulkan can't start on that machine, Metal needs the Mac).
 - **Why**: every `toImage` snapshot builds a full mip chain an export never reads.
 - **Files**: `shell/common/snapshot_controller_impeller.cc` (`generate_mips` off while `lazyMips` is on, the texture marked `SetWantsLazyMipmaps`), `impeller/core/texture.{h,cc}` (the mark and the kept copy), `impeller/display_list/lazy_mipmaps.{h,cc}` (`TextureForSampling`: a mipmapped copy made once by blit copy + `GenerateMipmap`, only for samplers with `MipFilter::kLinear`), `impeller/display_list/dl_dispatcher.cc` (`drawImageRect`, and `drawImage` through it) and `paint.cc` (image shaders) call it.
 - **Tests**: `impeller/display_list/reelx_snapshot_unittests.cc` (`AiksTest.ReelxSnapshotWithoutMipsHasOneLevel`, `ReelxLazyMipmapsOnlyForMipmapSampling`, `ReelxLazyMipmapsNotForOneLevelSizes`).
@@ -40,7 +40,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 
 ## P2 — Pooled targets and one-copy readback off the IO thread
 
-- **Status**: written on `engine-perf/3.47.7-wip`, not yet built. Pooled readback buffers (P2b's buffer half) are not written: the copy they would save is gone with the zero-copy hand-over; the stats keys stay for them.
+- **Status**: on `engine-perf/3.47.7-wip`; built and tested on Linux (host_debug_unopt, 2026-11-09): the P2a tests pass on OpenGLES, `ImageEncodingReelxTest.*` pass, and a Reelx export with `oneCopyReadback` on is byte-identical to the stock engine's. Pooled readback buffers (P2b's buffer half) are not written: the copy they would save is gone with the zero-copy hand-over; the stats keys stay for them.
 - **Why**: every snapshot allocates a new resolve texture, every readback a new buffer, and the readback copies the frame again on the IO thread.
 - **Files**: P2a (`targetPool`) `impeller/display_list/dl_dispatcher.{h,cc}` (`DisplayListToTexture(..., pooled_target, pool_hit)`: one-level targets from a pool of three on the `ContentContext`, reused once nothing else holds them, lazy-mip state cleared), `impeller/entity/contents/content_context.h` (`GetSnapshotTargetPool`), `shell/common/snapshot_controller_impeller.cc` (pooled while `lazyMips` and `targetPool` are on; counts `targetPoolHits`/`Misses`). P2b/P2c (`oneCopyReadback`) `lib/ui/painting/image_encoding.cc`: `rawUnmodified` hands Dart the downloaded buffer itself (`SkData::MakeWithProc` holding the raster image), other raw formats swizzle in one pass straight into the returned data (`SkPixmap::readPixels`), and the copy runs on the concurrent worker runner instead of the IO thread.
 - **Tests**: `AiksTest.ReelxPooledTargetIsReusedOnceReleased`, `ReelxMipmappedTargetsAreNotPooled` (`impeller_unittests`); `ImageEncodingReelxTest.OneCopyKeepsTheBytes`, `OneCopyUnmodifiedIsTheImagesOwnMemory` (`ui_unittests`).
@@ -49,7 +49,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 
 ## P3 — Exact (lossless) snapshots
 
-- **Status**: written on `engine-perf/3.47.7-wip`, not yet built.
+- **Status**: on `engine-perf/3.47.7-wip`; built and tested on Linux (host_debug_unopt, 2026-11-09): `ReelxLosslessSnapshotTarget` passes on OpenGLES; the lossy case only exists on Apple GPUs.
 - **Why**: on Apple GPU family 8+ snapshots are stored with lossy compression, so exported pixels are not exact.
 - **Files**: `impeller/display_list/dl_dispatcher.{h,cc}` (`DisplayListToTexture(..., lossless_target)`: the MSAA resolve texture is made lossless and passed as `existing_color_resolve_texture`, so `CreateOffscreenMSAA` and the render target cache are unchanged), `shell/common/snapshot_controller_impeller.cc` (passes `exactSnapshots`).
 - **Tests**: `AiksTest.ReelxLosslessSnapshotTarget` in `reelx_snapshot_unittests.cc`.
@@ -58,7 +58,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 
 ## P4 — Native frame hand-off to a file descriptor
 
-- **Status**: written on `engine-perf/3.47.7-wip`, not yet built; the writer's ordering, repeat, failure and stop logic compiled and checked off-tree (gcc -Werror, clang ThreadSanitizer) with stand-ins for `SkData` and `Dart_PostCObject`.
+- **Status**: on `engine-perf/3.47.7-wip`; built and tested on Linux (host_debug_unopt, 2026-11-09): `ReelxFfiTest.*` pass, `flutter_tester` exports the three functions, and a Reelx export through `ReelxImageReadbackToFd` (Skia path) is byte-identical to the stock engine's; the writer logic was also checked off-tree under ThreadSanitizer.
 - **Why**: handing frames to FFmpeg from Dart runs on the UI thread in hundreds of small writes per frame.
 - **Files**: `engine/src/flutter/lib/ui/reelx/reelx_handoff.cc` (`ReelxImageReadbackToFd`, `ReelxRepeatLastToFd`, `ReelxReleaseFd`: the readback is `toByteData`'s own, `ConvertImageToRaster` then `EncodeImage`, so the bytes are the same; one writer thread per descriptor writes in call order, keeps the last frame, posts `[token, status, bytes, digest]` with a 64-bit digest of its own), `reelx_ffi.h` (declarations), `lib/ui/BUILD.gn`. Exported by the existing `Reelx*` symbol patterns.
 - **Tests**: `ReelxFfiTest.Handoff*` in `ui_unittests` (refusals before any image); the readback path is Reelx's `frame_handoff_export_test.dart` against the real engine.
@@ -67,7 +67,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 
 ## P5 — BT.709 for native video textures
 
-- **Status**: written on `engine-perf/3.47.7-wip`, not yet built.
+- **Status**: on `engine-perf/3.47.7-wip`; built and tested on Linux (host_debug_unopt, 2026-11-09) for the Impeller part (`EntityTest.YUV*` pass); the macOS `.mm` files and the Metal shader path need the Mac.
 - **Why**: NV12 external textures are always converted with BT.601.
 - **Files**: `impeller/geometry/color.h` (`kBT709LimitedRange`, `kBT709FullRange` after the existing values), `impeller/entity/contents/filters/yuv_to_rgb_filter_contents.{h,cc}` (BT.709 matrices; `MatrixFor`, `IsLimitedRange`; the shader is unchanged: it gets 0 for limited range), `shell/platform/embedder/embedder.h` and `embedder_external_texture_metal.mm` (the new spaces, Impeller and Skia), `shell/platform/darwin/macos/framework/Source/FlutterExternalTexture.mm` (a buffer tagged ITU-R 709 gets BT.709 while `bt709Textures` is on, macOS 12+), `shell/platform/darwin/macos/BUILD.gn` (`//flutter/lib/ui`).
 - **Tests**: `EntityTest.YUVToRGBMatricesInvertTheirSpaces`, `EntityTest.YUVColorSpaceRanges` in `impeller/entity/entity_unittests.cc` (the BT.709 matrices checked off-tree to 3e-6).
