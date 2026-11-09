@@ -14,8 +14,8 @@
 #include "flutter/display_list/image/dl_image_skia.h"
 #include "flutter/fml/synchronization/waitable_event.h"
 #include "flutter/lib/ui/painting/image.h"
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
 #include "flutter/lib/ui/painting/testing/mocks.h"
+#include "flutter/lib/ui/reelx/reelx_ffi.h"
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/shell/common/shell_test.h"
 #include "flutter/shell/common/thread_host.h"
@@ -685,8 +685,8 @@ TEST(ImageEncodingImpellerTest, PngEncodingBGRA10XR) {
 // before, rawUnmodified without a copy.
 namespace {
 sk_sp<SkImage> ReelxBgraImage() {
-  SkImageInfo info = SkImageInfo::Make(64, 32, kBGRA_8888_SkColorType,
-                                       kPremul_SkAlphaType);
+  SkImageInfo info =
+      SkImageInfo::Make(64, 32, kBGRA_8888_SkColorType, kPremul_SkAlphaType);
   auto surface = SkSurfaces::Raster(info);
   SkPaint paint;
   surface->getCanvas()->clear(SK_ColorWHITE);

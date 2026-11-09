@@ -1322,10 +1322,10 @@ std::shared_ptr<Texture> DisplayListToTexture(
     desc.mip_count = mip_count;
     Allocator& allocator = *context.GetContext()->GetResourceAllocator();
     color_target =
-        pooled_target
-            ? TargetFromPool(context.GetContentContext().GetSnapshotTargetPool(),
-                             allocator, desc, pool_hit)
-            : allocator.CreateTexture(desc);
+        pooled_target ? TargetFromPool(
+                            context.GetContentContext().GetSnapshotTargetPool(),
+                            allocator, desc, pool_hit)
+                      : allocator.CreateTexture(desc);
   }
   // Do not use the render target cache as the lifecycle of this texture
   // will outlive a particular frame.

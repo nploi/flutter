@@ -117,8 +117,7 @@ namespace {
   bool bt709 = false;
   if (flutter::reelx::IsFeatureOn(flutter::reelx::Feature::kBt709Textures)) {
     if (@available(macOS 12.0, *)) {
-      CFTypeRef matrix =
-          CVBufferCopyAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey, nullptr);
+      CFTypeRef matrix = CVBufferCopyAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey, nullptr);
       if (matrix != nullptr) {
         bt709 = CFEqual(matrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2);
         CFRelease(matrix);
