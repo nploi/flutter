@@ -7,6 +7,8 @@
 
 #include <cstdint>
 
+#include "third_party/dart/runtime/include/dart_api.h"
+
 // Reelx engine extensions.
 //
 // The C functions below are looked up from Dart with dart:ffi
@@ -31,6 +33,28 @@ REELX_EXPORT const char* ReelxEngineInfo(void);
 /// Returns 0 on success, -1 for an unknown name, -2 for a feature this build
 /// doesn't contain (it stays off).
 REELX_EXPORT int32_t ReelxSetFeature(const char* name, int32_t on);
+
+/// fdHandoff (reelx_handoff.cc). Reads [image] (a ui.Image) back as
+/// toByteData would (format 0 rawUnmodified, 1 rawRgba) and writes the bytes
+/// to [fd] on that descriptor's writer thread; posts [token, status, bytes,
+/// digest] (+ errno when a write failed) to [port] in call order. Returns 0
+/// when queued, -1 not an image (or the feature is off), -2 bad fd, -3
+/// unknown format. The caller owns [fd] and may dispose [image] at once.
+REELX_EXPORT int32_t ReelxImageReadbackToFd(Dart_Handle image,
+                                            int32_t fd,
+                                            int32_t format,
+                                            int64_t port,
+                                            int64_t token);
+
+/// Writes the frame written just before it to [fd] again; -4 when nothing
+/// was ever asked for on [fd].
+REELX_EXPORT int32_t ReelxRepeatLastToFd(int32_t fd,
+                                         int64_t port,
+                                         int64_t token);
+
+/// Ends [fd]'s writer once its pending writes end (requests still waiting
+/// for bytes are reported as failed). The engine never closes [fd].
+REELX_EXPORT int32_t ReelxReleaseFd(int32_t fd);
 
 }  // extern "C"
 

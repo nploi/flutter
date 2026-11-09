@@ -40,6 +40,7 @@ source_set("ui") {
     "floating_point.h",
     "reelx/reelx_ffi.cc",
     "reelx/reelx_ffi.h",
+    "reelx/reelx_handoff.cc",
     "io_manager.h",
     "isolate_name_server/isolate_name_server.cc",
     "isolate_name_server/isolate_name_server.h",
