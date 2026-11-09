@@ -40,10 +40,11 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 
 ## P2 — Pooled targets and one-copy readback off the IO thread
 
+- **Status**: written on `engine-perf/3.47.7-wip`, not yet built. Pooled readback buffers (P2b's buffer half) are not written: the copy they would save is gone with the zero-copy hand-over; the stats keys stay for them.
 - **Why**: every snapshot allocates a new resolve texture, every readback a new buffer, and the readback copies the frame again on the IO thread.
-- **Files**: _pending_
-- **Tests**: _pending_
-- **Verify**: _pending_
+- **Files**: P2a (`targetPool`) `impeller/display_list/dl_dispatcher.{h,cc}` (`DisplayListToTexture(..., pooled_target, pool_hit)`: one-level targets from a pool of three on the `ContentContext`, reused once nothing else holds them, lazy-mip state cleared), `impeller/entity/contents/content_context.h` (`GetSnapshotTargetPool`), `shell/common/snapshot_controller_impeller.cc` (pooled while `lazyMips` and `targetPool` are on; counts `targetPoolHits`/`Misses`). P2b/P2c (`oneCopyReadback`) `lib/ui/painting/image_encoding.cc`: `rawUnmodified` hands Dart the downloaded buffer itself (`SkData::MakeWithProc` holding the raster image), other raw formats swizzle in one pass straight into the returned data (`SkPixmap::readPixels`), and the copy runs on the concurrent worker runner instead of the IO thread.
+- **Tests**: `AiksTest.ReelxPooledTargetIsReusedOnceReleased`, `ReelxMipmappedTargetsAreNotPooled` (`impeller_unittests`); `ImageEncodingReelxTest.OneCopyKeepsTheBytes`, `OneCopyUnmodifiedIsTheImagesOwnMemory` (`ui_unittests`).
+- **Verify**: the tests above; Reelx's gated determinism suite byte-identical with `oneCopyReadback` on and off; the export log's pool hit rate near 100 % after the first frames.
 - **Feature**: `targetPool`, `oneCopyReadback`
 
 ## P3 — Exact (lossless) snapshots

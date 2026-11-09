@@ -20,10 +20,11 @@ namespace flutter {
 
 namespace {
 
-// Reelx P1 (lazyMips) and P3 (exactSnapshots) live in this file's
-// snapshots.
+// Reelx P1 (lazyMips), P2a (targetPool) and P3 (exactSnapshots) live in
+// this file's snapshots.
 [[maybe_unused]] const bool kReelxSnapshotFeatures = [] {
   reelx::SetAvailable(reelx::Feature::kLazyMips);
+  reelx::SetAvailable(reelx::Feature::kTargetPool);
   reelx::SetAvailable(reelx::Feature::kExactSnapshots);
   return true;
 }();
@@ -74,13 +75,23 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
   // lazyMips their mipmaps are made only if a draw samples them with
   // mipmaps. With exactSnapshots the target isn't lossy-compressed, so a
   // readback gets exactly the rendered bytes.
+  // With targetPool (and one-level targets, so lazyMips) a snapshot reuses
+  // the target of an earlier one nothing holds any more.
   const bool lazy_mips = reelx::IsFeatureOn(reelx::Feature::kLazyMips);
+  const bool pooled =
+      lazy_mips && reelx::IsFeatureOn(reelx::Feature::kTargetPool);
+  bool pool_hit = false;
   std::shared_ptr<impeller::Texture> texture = impeller::DisplayListToTexture(
       display_list, render_target_size, *context,
       /*reset_host_buffer=*/false,
       /*generate_mips=*/!lazy_mips, impeller_pixel_format,
       /*lossless_target=*/
-      reelx::IsFeatureOn(reelx::Feature::kExactSnapshots));
+      reelx::IsFeatureOn(reelx::Feature::kExactSnapshots),
+      /*pooled_target=*/pooled, &pool_hit);
+  if (texture && pooled) {
+    reelx::CountStat(pool_hit ? reelx::Stat::kTargetPoolHits
+                              : reelx::Stat::kTargetPoolMisses);
+  }
   if (texture && lazy_mips) {
     texture->SetWantsLazyMipmaps(true);
   }

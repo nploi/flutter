@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <cstring>
+#include <vector>
+
 #include "png.h"
 
 #include "flutter/lib/ui/painting/image_encoding.h"
@@ -11,6 +14,7 @@
 #include "flutter/display_list/image/dl_image_skia.h"
 #include "flutter/fml/synchronization/waitable_event.h"
 #include "flutter/lib/ui/painting/image.h"
+#include "flutter/lib/ui/reelx/reelx_ffi.h"
 #include "flutter/lib/ui/painting/testing/mocks.h"
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/shell/common/shell_test.h"
@@ -676,6 +680,58 @@ TEST(ImageEncodingImpellerTest, PngEncodingBGRA10XR) {
 }
 
 #endif  // IMPELLER_SUPPORTS_RENDERING
+
+// Reelx P2b: with oneCopyReadback the raw formats give the same bytes as
+// before, rawUnmodified without a copy.
+namespace {
+sk_sp<SkImage> ReelxBgraImage() {
+  SkImageInfo info = SkImageInfo::Make(64, 32, kBGRA_8888_SkColorType,
+                                       kPremul_SkAlphaType);
+  auto surface = SkSurfaces::Raster(info);
+  SkPaint paint;
+  surface->getCanvas()->clear(SK_ColorWHITE);
+  paint.setColor(SK_ColorRED);
+  surface->getCanvas()->drawRect(SkRect::MakeXYWH(0, 0, 32, 32), paint);
+  paint.setColor(SK_ColorBLUE);
+  surface->getCanvas()->drawRect(SkRect::MakeXYWH(32, 0, 32, 32), paint);
+  return surface->makeImageSnapshot()->makeRasterImage(nullptr);
+}
+
+sk_sp<SkData> ReelxEncode(const sk_sp<SkImage>& image,
+                          ImageByteFormat format,
+                          bool one_copy) {
+  reelx::SetAvailableForTesting(reelx::Feature::kOneCopyReadback, one_copy);
+  fml::StatusOr<sk_sp<SkData>> data = EncodeImage(image, format);
+  reelx::ResetFeaturesForTesting();
+  return data.ok() ? data.value() : nullptr;
+}
+}  // namespace
+
+TEST(ImageEncodingReelxTest, OneCopyKeepsTheBytes) {
+  sk_sp<SkImage> image = ReelxBgraImage();
+  for (ImageByteFormat format :
+       {ImageByteFormat::kRawRGBA, ImageByteFormat::kRawUnmodified,
+        ImageByteFormat::kRawStraightRGBA}) {
+    sk_sp<SkData> before = ReelxEncode(image, format, false);
+    sk_sp<SkData> after = ReelxEncode(image, format, true);
+    ASSERT_TRUE(before && after) << format;
+    EXPECT_TRUE(before->equals(after.get())) << format;
+  }
+}
+
+TEST(ImageEncodingReelxTest, OneCopyUnmodifiedIsTheImagesOwnMemory) {
+  sk_sp<SkImage> image = ReelxBgraImage();
+  SkPixmap pixmap;
+  ASSERT_TRUE(image->peekPixels(&pixmap));
+  sk_sp<SkData> data =
+      ReelxEncode(image, ImageByteFormat::kRawUnmodified, true);
+  ASSERT_TRUE(data);
+  EXPECT_EQ(data->data(), pixmap.addr());
+  // The data keeps the image's pixels alive after the image goes.
+  std::vector<uint8_t> copy(data->bytes(), data->bytes() + data->size());
+  image.reset();
+  EXPECT_EQ(0, std::memcmp(copy.data(), data->data(), copy.size()));
+}
 
 }  // namespace testing
 }  // namespace flutter
