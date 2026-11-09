@@ -10,12 +10,12 @@
 
 #include "flutter/common/task_runners.h"
 #include "flutter/fml/build_config.h"
+#include "flutter/fml/concurrent_message_loop.h"
 #include "flutter/fml/make_copyable.h"
 #include "flutter/fml/status_or.h"
 #include "flutter/fml/trace_event.h"
 #include "flutter/lib/ui/painting/image.h"
 #include "flutter/lib/ui/reelx/reelx_ffi.h"
-#include "flutter/fml/concurrent_message_loop.h"
 #include "fml/status.h"
 #if IMPELLER_SUPPORTS_RENDERING
 #include "flutter/lib/ui/painting/image_encoding_impeller.h"
@@ -86,8 +86,7 @@ fml::StatusOr<sk_sp<SkData>> CopyImageByteData(
                        "Could not copy pixels from the raster image.");
   }
 
-  const bool one_copy =
-      reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback);
+  const bool one_copy = reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback);
 
   // The color types already match. No need to swizzle. Return early.
   if (pixmap.colorType() == color_type && pixmap.alphaType() == alpha_type) {
@@ -177,17 +176,16 @@ void EncodeImageAndInvokeDataCallback(
       };
   // Reelx P2c: the copy (or swizzle) runs on a concurrent worker, not on the
   // IO thread, which image decoding also uses.
-  auto encode_task =
-      [encode_now = std::move(encode_now), concurrent_runner](
-          const fml::StatusOr<sk_sp<SkImage>>& raster_image) {
-        if (concurrent_runner &&
-            reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback)) {
-          concurrent_runner->PostTask(
-              [encode_now, raster_image]() { encode_now(raster_image); });
-          return;
-        }
-        encode_now(raster_image);
-      };
+  auto encode_task = [encode_now = std::move(encode_now), concurrent_runner](
+                         const fml::StatusOr<sk_sp<SkImage>>& raster_image) {
+    if (concurrent_runner &&
+        reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback)) {
+      concurrent_runner->PostTask(
+          [encode_now, raster_image]() { encode_now(raster_image); });
+      return;
+    }
+    encode_now(raster_image);
+  };
 
   FML_DCHECK(image);
 #if IMPELLER_SUPPORTS_RENDERING

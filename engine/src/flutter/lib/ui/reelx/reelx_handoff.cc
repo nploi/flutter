@@ -70,8 +70,12 @@ uint64_t Digest(const uint8_t* data, size_t length) {
   return hash;
 }
 
-void Post(int64_t port, int64_t token, int64_t status, int64_t bytes,
-          uint64_t digest, int64_t error) {
+void Post(int64_t port,
+          int64_t token,
+          int64_t status,
+          int64_t bytes,
+          uint64_t digest,
+          int64_t error) {
   Dart_CObject values[5];
   Dart_CObject* pointers[5];
   int64_t fields[5] = {token, status, bytes, static_cast<int64_t>(digest),
@@ -205,8 +209,7 @@ class FdWriter : public std::enable_shared_from_this<FdWriter> {
         std::lock_guard<std::mutex> lock(mutex_);
         last_ = slot.data;
       }
-      Post(slot.port, slot.token, kStatusOk, length,
-           Digest(bytes, length), 0);
+      Post(slot.port, slot.token, kStatusOk, length, Digest(bytes, length), 0);
     }
   }
 
@@ -296,8 +299,8 @@ REELX_EXPORT int32_t ReelxImageReadbackToFd(Dart_Handle image,
   auto io_manager = state->GetIOManager();
   // Read back as toByteData does, then hand the bytes to the writer (from
   // whichever thread the readback finishes on).
-  auto on_raster = [writer, slot, byte_format](
-                       const fml::StatusOr<sk_sp<SkImage>>& raster) {
+  auto on_raster = [writer, slot,
+                    byte_format](const fml::StatusOr<sk_sp<SkImage>>& raster) {
     if (!raster.ok()) {
       writer->Fulfil(slot, nullptr);
       return;

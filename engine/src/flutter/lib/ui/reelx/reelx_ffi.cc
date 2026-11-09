@@ -83,8 +83,8 @@ bool IsFeatureOn(Feature feature) {
 }
 
 void CountStat(Stat stat) {
-  GetState().stats[static_cast<int>(stat)].fetch_add(
-      1, std::memory_order_relaxed);
+  GetState().stats[static_cast<int>(stat)].fetch_add(1,
+                                                     std::memory_order_relaxed);
 }
 
 void SetAvailable(Feature feature) {

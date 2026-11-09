@@ -135,8 +135,7 @@ std::optional<Entity> YUVToRGBFilterContents::RenderFilter(
 
     FS::FragInfo frag_info;
     // The shader removes 16/255 from luma when this is 0 (limited range).
-    frag_info.yuv_color_space =
-        IsLimitedRange(yuv_color_space) ? 0.0f : 1.0f;
+    frag_info.yuv_color_space = IsLimitedRange(yuv_color_space) ? 0.0f : 1.0f;
     frag_info.matrix = MatrixFor(yuv_color_space);
 
     raw_ptr<const Sampler> sampler =
