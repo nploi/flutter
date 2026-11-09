@@ -108,5 +108,49 @@ TEST_P(AiksTest, ReelxLosslessSnapshotTarget) {
             CompressionType::kLossless);
 }
 
+TEST_P(AiksTest, ReelxPooledTargetIsReusedOnceReleased) {
+  AiksContext renderer(GetContext(), nullptr);
+  auto snapshot = [&](bool* hit) {
+    return DisplayListToTexture(TwoRects(), {256, 256}, renderer,
+                                /*reset_host_buffer=*/true,
+                                /*generate_mips=*/false,
+                                /*target_pixel_format=*/std::nullopt,
+                                /*lossless_target=*/false,
+                                /*pooled_target=*/true, hit);
+  };
+  bool hit = true;
+  auto first = snapshot(&hit);
+  ASSERT_TRUE(first);
+  EXPECT_FALSE(hit);
+  Texture* first_address = first.get();
+
+  // Still held: a second target.
+  auto second = snapshot(&hit);
+  ASSERT_TRUE(second);
+  EXPECT_FALSE(hit);
+  EXPECT_NE(second.get(), first_address);
+
+  // Released: reused, with what the last snapshot left on it gone.
+  first->SetWantsLazyMipmaps(true);
+  first.reset();
+  auto third = snapshot(&hit);
+  EXPECT_TRUE(hit);
+  EXPECT_EQ(third.get(), first_address);
+  EXPECT_FALSE(third->WantsLazyMipmaps());
+}
+
+TEST_P(AiksTest, ReelxMipmappedTargetsAreNotPooled) {
+  AiksContext renderer(GetContext(), nullptr);
+  bool hit = true;
+  auto texture = DisplayListToTexture(TwoRects(), {256, 256}, renderer,
+                                      /*reset_host_buffer=*/true,
+                                      /*generate_mips=*/true,
+                                      /*target_pixel_format=*/std::nullopt,
+                                      /*lossless_target=*/false,
+                                      /*pooled_target=*/true, &hit);
+  ASSERT_TRUE(texture);
+  EXPECT_TRUE(renderer.GetContentContext().GetSnapshotTargetPool().empty());
+}
+
 }  // namespace testing
 }  // namespace impeller

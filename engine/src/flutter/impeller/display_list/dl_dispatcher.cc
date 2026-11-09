@@ -14,6 +14,7 @@
 #include "display_list/effects/dl_image_filter.h"
 #include "flutter/fml/logging.h"
 #include "fml/closure.h"
+#include "impeller/core/allocator.h"
 #include "impeller/core/formats.h"
 #include "impeller/display_list/aiks_context.h"
 #include "impeller/display_list/canvas.h"
@@ -1227,6 +1228,57 @@ FirstPassDispatcher::TakeBackdropData() {
   return std::make_pair(temp, backdrop_count_);
 }
 
+namespace {
+
+bool SameTarget(const TextureDescriptor& a, const TextureDescriptor& b) {
+  return a.storage_mode == b.storage_mode && a.type == b.type &&
+         a.format == b.format && a.size == b.size &&
+         a.mip_count == b.mip_count && a.usage == b.usage &&
+         a.sample_count == b.sample_count &&
+         a.compression_type == b.compression_type;
+}
+
+// Reelx P2a: a texture for [desc] from [pool], reused when nothing else
+// holds it, else new (the pool keeps at most three).
+std::shared_ptr<Texture> TargetFromPool(
+    std::vector<std::shared_ptr<Texture>>& pool,
+    Allocator& allocator,
+    const TextureDescriptor& desc,
+    bool* hit) {
+  for (const std::shared_ptr<Texture>& texture : pool) {
+    if (texture.use_count() == 1 &&
+        SameTarget(texture->GetTextureDescriptor(), desc)) {
+      // Whatever a previous snapshot left on it goes.
+      texture->SetWantsLazyMipmaps(false);
+      texture->SetLazyMipmapped(nullptr);
+      if (hit) {
+        *hit = true;
+      }
+      return texture;
+    }
+  }
+  if (hit) {
+    *hit = false;
+  }
+  std::shared_ptr<Texture> texture = allocator.CreateTexture(desc);
+  if (!texture) {
+    return nullptr;
+  }
+  pool.push_back(texture);
+  constexpr size_t kMaxPooledTargets = 3;
+  for (auto it = pool.begin();
+       pool.size() > kMaxPooledTargets && it != pool.end();) {
+    if (*it != texture && it->use_count() == 1) {
+      it = pool.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  return texture;
+}
+
+}  // namespace
+
 std::shared_ptr<Texture> DisplayListToTexture(
     const sk_sp<flutter::DisplayList>& display_list,
     ISize size,
@@ -1234,30 +1286,46 @@ std::shared_ptr<Texture> DisplayListToTexture(
     bool reset_host_buffer,
     bool generate_mips,
     std::optional<PixelFormat> target_pixel_format,
-    bool lossless_target) {
+    bool lossless_target,
+    bool pooled_target,
+    bool* pool_hit) {
   int mip_count = 1;
   if (generate_mips) {
     mip_count = size.MipCount();
   }
+  const bool msaa =
+      context.GetContext()->GetCapabilities()->SupportsOffscreenMSAA() &&
+      PixelFormatSupportsMSAA(target_pixel_format);
   // Reelx P3: offscreen MSAA resolve textures are lossy-compressed on GPUs
   // that support it (Apple family 8+), which changes pixel bytes slightly.
   // A lossless target keeps the snapshot exactly as rendered, for callers
   // that read it back bit for bit.
-  std::shared_ptr<Texture> lossless_resolve;
-  if (lossless_target &&
-      context.GetContext()->GetCapabilities()->SupportsOffscreenMSAA() &&
-      PixelFormatSupportsMSAA(target_pixel_format)) {
+  // Reelx P2a: a pooled target reuses a texture of an earlier snapshot
+  // nothing holds any more. Only one-level targets: a reused texture's
+  // mipmaps wouldn't be generated again.
+  pooled_target = pooled_target && mip_count == 1;
+  std::shared_ptr<Texture> color_target;
+  if ((lossless_target && msaa) || pooled_target) {
     TextureDescriptor desc;
-    desc.storage_mode = impeller::RenderTarget::
-        kDefaultColorAttachmentConfigMSAA.resolve_storage_mode;
+    desc.storage_mode =
+        msaa ? impeller::RenderTarget::kDefaultColorAttachmentConfigMSAA
+                   .resolve_storage_mode
+             : impeller::RenderTarget::kDefaultColorAttachmentConfig
+                   .storage_mode;
     desc.format = target_pixel_format.value_or(
         context.GetContext()->GetCapabilities()->GetDefaultColorFormat());
     desc.size = size;
-    desc.compression_type = CompressionType::kLossless;
+    desc.compression_type = (msaa && !lossless_target)
+                                ? CompressionType::kLossy
+                                : CompressionType::kLossless;
     desc.usage = TextureUsage::kRenderTarget | TextureUsage::kShaderRead;
     desc.mip_count = mip_count;
-    lossless_resolve =
-        context.GetContext()->GetResourceAllocator()->CreateTexture(desc);
+    Allocator& allocator = *context.GetContext()->GetResourceAllocator();
+    color_target =
+        pooled_target
+            ? TargetFromPool(context.GetContentContext().GetSnapshotTargetPool(),
+                             allocator, desc, pool_hit)
+            : allocator.CreateTexture(desc);
   }
   // Do not use the render target cache as the lifecycle of this texture
   // will outlive a particular frame.
@@ -1265,8 +1333,7 @@ std::shared_ptr<Texture> DisplayListToTexture(
       impeller::RenderTargetAllocator(
           context.GetContext()->GetResourceAllocator());
   impeller::RenderTarget target;
-  if (context.GetContext()->GetCapabilities()->SupportsOffscreenMSAA() &&
-      PixelFormatSupportsMSAA(target_pixel_format)) {
+  if (msaa) {
     target = render_target_allocator.CreateOffscreenMSAA(
         *context.GetContext(),  // context
         size,                   // size
@@ -1276,7 +1343,7 @@ std::shared_ptr<Texture> DisplayListToTexture(
             kDefaultColorAttachmentConfigMSAA,  // color_attachment_config
         std::nullopt,                           // stencil_attachment_config
         nullptr,                                // existing_color_msaa_texture
-        lossless_resolve,    // existing_color_resolve_texture
+        color_target,        // existing_color_resolve_texture
         nullptr,             // existing_depth_stencil_texture
         target_pixel_format  // target_format
     );
@@ -1289,7 +1356,7 @@ std::shared_ptr<Texture> DisplayListToTexture(
         impeller::RenderTarget::
             kDefaultColorAttachmentConfig,  // color_attachment_config
         std::nullopt,                       // stencil_attachment_config
-        nullptr,                            // existing_color_texture
+        color_target,                       // existing_color_texture
         nullptr,                            // existing_depth_stencil_texture
         target_pixel_format                 // target_format
     );

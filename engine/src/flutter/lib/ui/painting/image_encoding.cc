@@ -14,6 +14,8 @@
 #include "flutter/fml/status_or.h"
 #include "flutter/fml/trace_event.h"
 #include "flutter/lib/ui/painting/image.h"
+#include "flutter/lib/ui/reelx/reelx_ffi.h"
+#include "flutter/fml/concurrent_message_loop.h"
 #include "fml/status.h"
 #if IMPELLER_SUPPORTS_RENDERING
 #include "flutter/lib/ui/painting/image_encoding_impeller.h"
@@ -35,6 +37,12 @@ class Context;
 }  // namespace impeller
 namespace flutter {
 namespace {
+
+// Reelx P2b/P2c (oneCopyReadback) live in this file's readback.
+[[maybe_unused]] const bool kReelxOneCopyReadback = [] {
+  reelx::SetAvailable(reelx::Feature::kOneCopyReadback);
+  return true;
+}();
 
 void FinalizeSkData(void* isolate_callback_data, void* peer) {
   SkData* buffer = reinterpret_cast<SkData*>(peer);
@@ -78,9 +86,35 @@ fml::StatusOr<sk_sp<SkData>> CopyImageByteData(
                        "Could not copy pixels from the raster image.");
   }
 
+  const bool one_copy =
+      reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback);
+
   // The color types already match. No need to swizzle. Return early.
   if (pixmap.colorType() == color_type && pixmap.alphaType() == alpha_type) {
+    if (one_copy) {
+      // Reelx P2b: the bytes are the downloaded buffer itself, kept alive by
+      // the raster image until Dart lets the data go.
+      SkImage* owner = SkSafeRef(raster_image.get());
+      return SkData::MakeWithProc(
+          pixmap.addr(), pixmap.computeByteSize(),
+          [](const void* /*ptr*/, void* context) {
+            static_cast<SkImage*>(context)->unref();
+          },
+          owner);
+    }
     return SkData::MakeWithCopy(pixmap.addr(), pixmap.computeByteSize());
+  }
+
+  if (one_copy) {
+    // Reelx P2b: swizzle straight into the returned data, one pass.
+    SkImageInfo info =
+        SkImageInfo::Make(raster_image->width(), raster_image->height(),
+                          color_type, alpha_type, nullptr);
+    sk_sp<SkData> data = SkData::MakeUninitialized(info.computeMinByteSize());
+    if (data && pixmap.readPixels(info, data->writable_data(),
+                                  info.minRowBytes(), 0, 0)) {
+      return data;
+    }
   }
 
   // Perform swizzle if the type doesnt match the specification.
@@ -114,7 +148,8 @@ void EncodeImageAndInvokeDataCallback(
     const fml::TaskRunnerAffineWeakPtr<SnapshotDelegate>& snapshot_delegate,
     const std::shared_ptr<const fml::SyncSwitch>& is_gpu_disabled_sync_switch,
     const std::shared_ptr<impeller::Context>& impeller_context,
-    bool is_impeller_enabled) {
+    bool is_impeller_enabled,
+    const std::shared_ptr<fml::ConcurrentTaskRunner>& concurrent_runner) {
   auto callback_task =
       fml::MakeCopyable([callback = std::move(callback)](
                             fml::StatusOr<sk_sp<SkData>>&& encoded) mutable {
@@ -123,7 +158,7 @@ void EncodeImageAndInvokeDataCallback(
   // The static leak checker gets confused by the use of fml::MakeCopyable in
   // EncodeImage.
   // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
-  auto encode_task =
+  auto encode_now =
       [callback_task = std::move(callback_task), format,
        ui_task_runner](const fml::StatusOr<sk_sp<SkImage>>& raster_image) {
         if (raster_image.ok()) {
@@ -139,6 +174,19 @@ void EncodeImageAndInvokeDataCallback(
             callback_task(raster_image.status());
           });
         }
+      };
+  // Reelx P2c: the copy (or swizzle) runs on a concurrent worker, not on the
+  // IO thread, which image decoding also uses.
+  auto encode_task =
+      [encode_now = std::move(encode_now), concurrent_runner](
+          const fml::StatusOr<sk_sp<SkImage>>& raster_image) {
+        if (concurrent_runner &&
+            reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback)) {
+          concurrent_runner->PostTask(
+              [encode_now, raster_image]() { encode_now(raster_image); });
+          return;
+        }
+        encode_now(raster_image);
       };
 
   FML_DCHECK(image);
@@ -189,14 +237,16 @@ Dart_Handle EncodeImage(CanvasImage* canvas_image,
        io_task_runner = task_runners.GetIOTaskRunner(),
        io_manager = UIDartState::Current()->GetIOManager(),
        snapshot_delegate = UIDartState::Current()->GetSnapshotDelegate(),
-       is_impeller_enabled =
-           UIDartState::Current()->IsImpellerEnabled()]() mutable {
+       is_impeller_enabled = UIDartState::Current()->IsImpellerEnabled(),
+       concurrent_runner =
+           UIDartState::Current()->GetConcurrentTaskRunner()]() mutable {
         EncodeImageAndInvokeDataCallback(
             image, std::move(callback), image_format, ui_task_runner,
             raster_task_runner, io_task_runner,
             io_manager->GetResourceContext(), snapshot_delegate,
             io_manager->GetIsGpuDisabledSyncSwitch(),
-            io_manager->GetImpellerContext(), is_impeller_enabled);
+            io_manager->GetImpellerContext(), is_impeller_enabled,
+            concurrent_runner);
       }));
 
   return Dart_Null();

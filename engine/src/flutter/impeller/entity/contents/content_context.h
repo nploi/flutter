@@ -10,6 +10,7 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "flutter/display_list/image/dl_image.h"
 #include "flutter/fml/logging.h"
@@ -386,6 +387,16 @@ class ContentContext {
   bool is_texture_caching_enabled_ = false;
   mutable std::unordered_map<const flutter::DlImage*, std::shared_ptr<Texture>>
       texture_cache_;
+
+ public:
+  /// Reelx P2a: one-level snapshot targets kept for reuse once nothing else
+  /// holds them (see DisplayListToTexture's pooled_target).
+  std::vector<std::shared_ptr<Texture>>& GetSnapshotTargetPool() const {
+    return snapshot_target_pool_;
+  }
+
+ private:
+  mutable std::vector<std::shared_ptr<Texture>> snapshot_target_pool_;
 
   ContentContext(const ContentContext&) = delete;
 
