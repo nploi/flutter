@@ -72,7 +72,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 ## P6 — Metal by default in `flutter_tester` on macOS
 
 - **Why**: `flutter test --enable-impeller` on macOS can't create a tester context (no `--impeller-backend`, no Vulkan), so headless renders fall back to Skia software.
-- **Files**: _pending_
-- **Tests**: _pending_
-- **Verify**: _pending_
+- **Files**: `engine/src/flutter/shell/testing/tester_main.cc` (`UsesMetal`: no backend asked for → Metal while `testerMetal` is on; the feature is marked available in `main` when Metal is compiled in), `shell/testing/BUILD.gn` (`//flutter/lib/ui` for the switch).
+- **Tests**: `reelx/tools/test/tester_metal_test.sh` (macOS: `--enable-impeller` with and without `--impeller-backend=metal` gets past "Could not create tester context"); the decision itself compiled and checked against `reelx_ffi` off-tree.
+- **Verify**: after a rebase, `REELX_ENGINE_OUT=engine/src/out reelx/tools/test/tester_metal_test.sh`; a CLI render with the engine folder logs the engine and renders.
 - **Feature**: `testerMetal`
