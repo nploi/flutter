@@ -13,6 +13,7 @@
 #include "flutter/display_list/geometry/dl_path.h"
 #include "fml/logging.h"
 #include "impeller/display_list/color_filter.h"
+#include "impeller/display_list/lazy_mipmaps.h"
 #include "impeller/display_list/skia_conversions.h"
 #include "impeller/entity/contents/color_source_contents.h"
 #include "impeller/entity/contents/conical_gradient_contents.h"
@@ -202,6 +203,7 @@ std::shared_ptr<ColorSourceContents> Paint::CreateContents(
           image_color_source->vertical_tile_mode());
       auto sampler_descriptor =
           skia_conversions::ToSamplerDescriptor(image_color_source->sampling());
+      texture = TextureForSampling(renderer, texture, sampler_descriptor);
       // See https://github.com/flutter/flutter/issues/165205
       flutter::DlMatrix effect_transform = image_color_source->matrix().To3x3();
 

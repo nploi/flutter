@@ -21,6 +21,7 @@
 #include "impeller/display_list/dl_image_impeller.h"
 #include "impeller/display_list/dl_text_impeller.h"
 #include "impeller/display_list/dl_vertices_geometry.h"
+#include "impeller/display_list/lazy_mipmaps.h"
 #include "impeller/display_list/nine_patch_converter.h"
 #include "impeller/display_list/skia_conversions.h"
 #include "impeller/entity/contents/atlas_contents.h"
@@ -730,12 +731,13 @@ void DlDispatcherBase::drawImageRect(const sk_sp<flutter::DlImage> image,
                                          flutter::DlSrcRectConstraint::kFast) {
   AUTO_DEPTH_WATCHER(1u);
 
+  SamplerDescriptor sampler = skia_conversions::ToSamplerDescriptor(sampling);
   GetCanvas().DrawImageRect(
-      GetTexture(image),                               // image
-      src,                                             // source rect
-      dst,                                             // destination rect
-      render_with_attributes ? paint_ : Paint(),       // paint
-      skia_conversions::ToSamplerDescriptor(sampling)  // sampling
+      TextureForSampling(GetContentContext(), GetTexture(image), sampler),
+      src,                                        // source rect
+      dst,                                        // destination rect
+      render_with_attributes ? paint_ : Paint(),  // paint
+      sampler                                     // sampling
   );
 }
 
@@ -1231,10 +1233,31 @@ std::shared_ptr<Texture> DisplayListToTexture(
     AiksContext& context,
     bool reset_host_buffer,
     bool generate_mips,
-    std::optional<PixelFormat> target_pixel_format) {
+    std::optional<PixelFormat> target_pixel_format,
+    bool lossless_target) {
   int mip_count = 1;
   if (generate_mips) {
     mip_count = size.MipCount();
+  }
+  // Reelx P3: offscreen MSAA resolve textures are lossy-compressed on GPUs
+  // that support it (Apple family 8+), which changes pixel bytes slightly.
+  // A lossless target keeps the snapshot exactly as rendered, for callers
+  // that read it back bit for bit.
+  std::shared_ptr<Texture> lossless_resolve;
+  if (lossless_target &&
+      context.GetContext()->GetCapabilities()->SupportsOffscreenMSAA() &&
+      PixelFormatSupportsMSAA(target_pixel_format)) {
+    TextureDescriptor desc;
+    desc.storage_mode = impeller::RenderTarget::
+        kDefaultColorAttachmentConfigMSAA.resolve_storage_mode;
+    desc.format = target_pixel_format.value_or(
+        context.GetContext()->GetCapabilities()->GetDefaultColorFormat());
+    desc.size = size;
+    desc.compression_type = CompressionType::kLossless;
+    desc.usage = TextureUsage::kRenderTarget | TextureUsage::kShaderRead;
+    desc.mip_count = mip_count;
+    lossless_resolve =
+        context.GetContext()->GetResourceAllocator()->CreateTexture(desc);
   }
   // Do not use the render target cache as the lifecycle of this texture
   // will outlive a particular frame.
@@ -1253,7 +1276,7 @@ std::shared_ptr<Texture> DisplayListToTexture(
             kDefaultColorAttachmentConfigMSAA,  // color_attachment_config
         std::nullopt,                           // stencil_attachment_config
         nullptr,                                // existing_color_msaa_texture
-        nullptr,             // existing_color_resolve_texture
+        lossless_resolve,    // existing_color_resolve_texture
         nullptr,             // existing_depth_stencil_texture
         target_pixel_format  // target_format
     );
