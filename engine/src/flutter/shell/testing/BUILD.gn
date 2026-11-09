@@ -72,6 +72,7 @@ template("tester") {
       "//flutter/flow",
       "//flutter/fml",
       "//flutter/lib/snapshot",
+      "//flutter/lib/ui",
       "//flutter/shell/common",
       "//flutter/shell/gpu:gpu_surface_software",
       "//flutter/skia",
