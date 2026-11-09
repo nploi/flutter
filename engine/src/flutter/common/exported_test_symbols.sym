@@ -9,4 +9,5 @@
   LoadLibraryFromKernel;
   LookupEntryPoint;
   ForceShutdownIsolate;
+  Reelx*;
 };
