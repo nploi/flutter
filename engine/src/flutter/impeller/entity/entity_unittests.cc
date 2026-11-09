@@ -25,6 +25,7 @@
 #include "impeller/entity/contents/filters/filter_contents.h"
 #include "impeller/entity/contents/filters/gaussian_blur_filter_contents.h"
 #include "impeller/entity/contents/filters/inputs/filter_input.h"
+#include "impeller/entity/contents/filters/yuv_to_rgb_filter_contents.h"
 #include "impeller/entity/contents/linear_gradient_contents.h"
 #include "impeller/entity/contents/radial_gradient_contents.h"
 #include "impeller/entity/contents/runtime_effect_contents.h"
@@ -1684,8 +1685,55 @@ static Vector3 RGBToYUV(Vector3 rgb, YUVColorSpace yuv_color_space) {
       yuv.y = rgb.x * -0.145 + rgb.y * -0.291 + rgb.z * 0.439 + 0.5;
       yuv.z = rgb.x * 0.429 + rgb.y * -0.368 + rgb.z * -0.071 + 0.5;
       break;
+    case YUVColorSpace::kBT709FullRange:
+    case YUVColorSpace::kBT709LimitedRange: {
+      bool limited = yuv_color_space == YUVColorSpace::kBT709LimitedRange;
+      Scalar y = rgb.x * 0.2126 + rgb.y * 0.7152 + rgb.z * 0.0722;
+      Scalar cb = (rgb.z - y) / 1.8556;
+      Scalar cr = (rgb.x - y) / 1.5748;
+      yuv.x = limited ? (y * 219.0 + 16.0) / 255.0 : y;
+      yuv.y = (limited ? cb * 224.0 / 255.0 : cb) + 0.5;
+      yuv.z = (limited ? cr * 224.0 / 255.0 : cr) + 0.5;
+      break;
+    }
   }
   return yuv;
+}
+
+// Reelx P5: the BT.709 matrices, after the shader's offsets, turn their
+// space's YUV back into the colour. (The BT.601 limited-range matrix keeps
+// upstream's rounded coefficients, about 0.02 off, so it isn't held to this.)
+TEST(EntityTest, YUVToRGBMatricesInvertTheirSpaces) {
+  const Vector3 colors[] = {
+      {1.0, 1.0, 1.0},  {0.0, 0.0, 0.0},           {1.0, 0.0, 0.0},
+      {0.0, 1.0, 0.0},  {0.0, 0.0, 1.0},           {244.0 / 255, 67.0 / 255,
+                                                    54.0 / 255},
+  };
+  for (YUVColorSpace space :
+       {YUVColorSpace::kBT709LimitedRange, YUVColorSpace::kBT709FullRange}) {
+    Matrix matrix = YUVToRGBFilterContents::MatrixFor(space);
+    Scalar y_offset =
+        YUVToRGBFilterContents::IsLimitedRange(space) ? 16.0 / 255.0 : 0.0;
+    for (const Vector3& rgb : colors) {
+      Vector3 yuv = RGBToYUV(rgb, space);
+      Vector4 out = matrix * Vector4(yuv.x - y_offset, yuv.y - 0.5,
+                                     yuv.z - 0.5, 1.0);
+      EXPECT_NEAR(out.x, rgb.x, 0.01) << static_cast<int>(space);
+      EXPECT_NEAR(out.y, rgb.y, 0.01) << static_cast<int>(space);
+      EXPECT_NEAR(out.z, rgb.z, 0.01) << static_cast<int>(space);
+    }
+  }
+}
+
+TEST(EntityTest, YUVColorSpaceRanges) {
+  EXPECT_TRUE(YUVToRGBFilterContents::IsLimitedRange(
+      YUVColorSpace::kBT601LimitedRange));
+  EXPECT_TRUE(YUVToRGBFilterContents::IsLimitedRange(
+      YUVColorSpace::kBT709LimitedRange));
+  EXPECT_FALSE(YUVToRGBFilterContents::IsLimitedRange(
+      YUVColorSpace::kBT601FullRange));
+  EXPECT_FALSE(YUVToRGBFilterContents::IsLimitedRange(
+      YUVColorSpace::kBT709FullRange));
 }
 
 static std::vector<std::shared_ptr<Texture>> CreateTestYUVTextures(

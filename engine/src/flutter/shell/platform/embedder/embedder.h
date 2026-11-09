@@ -822,6 +822,10 @@ typedef enum {
 typedef enum {
   kBT601FullRange,
   kBT601LimitedRange,
+  /// Reelx P5: BT.709, used only while the engine's bt709Textures feature
+  /// is on.
+  kBT709FullRange,
+  kBT709LimitedRange,
 } FlutterMetalExternalTextureYUVColorSpace;
 
 typedef struct {
