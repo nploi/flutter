@@ -5,6 +5,7 @@
 #ifndef FLUTTER_IMPELLER_CORE_TEXTURE_H_
 #define FLUTTER_IMPELLER_CORE_TEXTURE_H_
 
+#include <memory>
 #include <string_view>
 
 #include "flutter/fml/mapping.h"
@@ -55,6 +56,17 @@ class Texture {
   /// modified and the mipmaps hasn't been regenerated.
   bool NeedsMipmapGeneration() const;
 
+  /// Reelx P1: a one-level texture whose maker would have given it mipmaps.
+  /// Draws that sample it with mipmaps use a mipmapped copy made once on
+  /// first need (see impeller/display_list/lazy_mipmaps.h); draws that don't,
+  /// and readbacks, use this texture as it is.
+  void SetWantsLazyMipmaps(bool wants);
+  bool WantsLazyMipmaps() const;
+
+  /// The mipmapped copy, once made (raster thread only).
+  const std::shared_ptr<Texture>& GetLazyMipmapped() const;
+  void SetLazyMipmapped(std::shared_ptr<Texture> mipmapped) const;
+
  protected:
   explicit Texture(TextureDescriptor desc);
 
@@ -71,6 +83,8 @@ class Texture {
  private:
   const TextureDescriptor desc_;
   bool is_opaque_ = false;
+  bool wants_lazy_mipmaps_ = false;
+  mutable std::shared_ptr<Texture> lazy_mipmapped_;
 
   bool IsSliceValid(size_t slice) const;
 

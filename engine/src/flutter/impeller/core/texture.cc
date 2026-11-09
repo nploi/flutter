@@ -72,4 +72,21 @@ bool Texture::NeedsMipmapGeneration() const {
   return !mipmap_generated_ && desc_.mip_count > 1;
 }
 
+void Texture::SetWantsLazyMipmaps(bool wants) {
+  wants_lazy_mipmaps_ = wants;
+}
+
+bool Texture::WantsLazyMipmaps() const {
+  return wants_lazy_mipmaps_ && desc_.mip_count == 1 &&
+         desc_.size.MipCount() > 1;
+}
+
+const std::shared_ptr<Texture>& Texture::GetLazyMipmapped() const {
+  return lazy_mipmapped_;
+}
+
+void Texture::SetLazyMipmapped(std::shared_ptr<Texture> mipmapped) const {
+  lazy_mipmapped_ = std::move(mipmapped);
+}
+
 }  // namespace impeller

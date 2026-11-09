@@ -12,12 +12,21 @@
 #include "flutter/impeller/display_list/dl_dispatcher.h"
 #include "flutter/impeller/display_list/dl_image_impeller.h"
 #include "flutter/impeller/geometry/size.h"
+#include "flutter/lib/ui/reelx/reelx_ffi.h"
 #include "flutter/shell/common/snapshot_controller.h"
 #include "impeller/entity/contents/runtime_effect_contents.h"
 
 namespace flutter {
 
 namespace {
+
+// Reelx P1 (lazyMips) and P3 (exactSnapshots) live in this file's
+// snapshots.
+[[maybe_unused]] const bool kReelxSnapshotFeatures = [] {
+  reelx::SetAvailable(reelx::Feature::kLazyMips);
+  reelx::SetAvailable(reelx::Feature::kExactSnapshots);
+  return true;
+}();
 
 std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
     const sk_sp<DisplayList>& display_list,
@@ -61,10 +70,21 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
       break;
   }
 
-  return impeller::DisplayListToTexture(
+  // Snapshots are mostly read back or drawn at their own size; with
+  // lazyMips their mipmaps are made only if a draw samples them with
+  // mipmaps. With exactSnapshots the target isn't lossy-compressed, so a
+  // readback gets exactly the rendered bytes.
+  const bool lazy_mips = reelx::IsFeatureOn(reelx::Feature::kLazyMips);
+  std::shared_ptr<impeller::Texture> texture = impeller::DisplayListToTexture(
       display_list, render_target_size, *context,
       /*reset_host_buffer=*/false,
-      /*generate_mips=*/true, impeller_pixel_format);
+      /*generate_mips=*/!lazy_mips, impeller_pixel_format,
+      /*lossless_target=*/
+      reelx::IsFeatureOn(reelx::Feature::kExactSnapshots));
+  if (texture && lazy_mips) {
+    texture->SetWantsLazyMipmaps(true);
+  }
+  return texture;
 }
 
 std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
