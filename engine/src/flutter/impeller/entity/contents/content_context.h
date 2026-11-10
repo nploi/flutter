@@ -121,6 +121,39 @@ enum ConicalKind {
 class Tessellator;
 class RenderTargetCache;
 
+/// Reelx P2a: a one-level snapshot target, reused once nothing else holds it.
+struct SnapshotTarget {
+  std::shared_ptr<Texture> texture;
+  /// Reelx P14: the attachments the framebuffer the backend cached for it
+  /// was made with, 0 for none.
+  uint64_t attachments_id = 0;
+};
+
+/// Reelx P14: the MSAA colour and depth/stencil textures that snapshot targets
+/// of one size and format draw with. Snapshots draw one after another and
+/// keep the content of neither, so one pair serves them all.
+struct SnapshotAttachments {
+  /// Changes whenever the textures do, and is never used twice.
+  uint64_t id = 0;
+  ISize size;
+  PixelFormat format = PixelFormat::kUnknown;
+  /// Null without MSAA.
+  std::shared_ptr<Texture> color_msaa;
+  std::shared_ptr<Texture> depth_stencil;
+};
+
+struct SnapshotTargetPool {
+  /// After this many onscreen frames without a snapshot the pool lets go of
+  /// what nothing else holds.
+  static constexpr uint32_t kIdleFrames = 300;
+
+  std::vector<SnapshotTarget> targets;
+  /// Least recently used first.
+  std::vector<SnapshotAttachments> attachments;
+  uint64_t last_attachments_id = 0;
+  uint32_t frames_since_snapshot = 0;
+};
+
 class ContentContext {
  public:
   explicit ContentContext(
@@ -405,14 +438,14 @@ class ContentContext {
       texture_cache_;
 
  public:
-  /// Reelx P2a: one-level snapshot targets kept for reuse once nothing else
-  /// holds them (see DisplayListToTexture's pooled_target).
-  std::vector<std::shared_ptr<Texture>>& GetSnapshotTargetPool() const {
+  /// Reelx P2a, P14: what snapshots keep for the snapshots after them (see
+  /// DisplayListToTexture's pooled_target and pooled_attachments).
+  SnapshotTargetPool& GetSnapshotTargetPool() const {
     return snapshot_target_pool_;
   }
 
  private:
-  mutable std::vector<std::shared_ptr<Texture>> snapshot_target_pool_;
+  mutable SnapshotTargetPool snapshot_target_pool_;
 
   ContentContext(const ContentContext&) = delete;
 

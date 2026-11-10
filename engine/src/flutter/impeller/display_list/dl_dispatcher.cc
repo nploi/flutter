@@ -1240,24 +1240,20 @@ bool SameTarget(const TextureDescriptor& a, const TextureDescriptor& b) {
 
 // Reelx P2a: a texture for [desc] from [pool], reused when nothing else
 // holds it, else new (the pool keeps at most three).
-std::shared_ptr<Texture> TargetFromPool(
-    std::vector<std::shared_ptr<Texture>>& pool,
-    Allocator& allocator,
-    const TextureDescriptor& desc,
-    bool* hit) {
-  for (const std::shared_ptr<Texture>& texture : pool) {
-    if (texture.use_count() == 1 &&
-        SameTarget(texture->GetTextureDescriptor(), desc)) {
-      // Whatever a previous snapshot left on it goes, the framebuffer the
-      // backend cached for it too: that one still points at the previous
-      // render target's MSAA and stencil textures, which are gone.
-      texture->SetWantsLazyMipmaps(false);
-      texture->SetLazyMipmapped(nullptr);
-      texture->ForgetRenderTargetCaches();
+std::shared_ptr<Texture> TargetFromPool(SnapshotTargetPool& pool,
+                                        Allocator& allocator,
+                                        const TextureDescriptor& desc,
+                                        bool* hit) {
+  for (const SnapshotTarget& target : pool.targets) {
+    if (target.texture.use_count() == 1 &&
+        SameTarget(target.texture->GetTextureDescriptor(), desc)) {
+      // Whatever a previous snapshot left on it goes.
+      target.texture->SetWantsLazyMipmaps(false);
+      target.texture->SetLazyMipmapped(nullptr);
       if (hit) {
         *hit = true;
       }
-      return texture;
+      return target.texture;
     }
   }
   if (hit) {
@@ -1267,17 +1263,75 @@ std::shared_ptr<Texture> TargetFromPool(
   if (!texture) {
     return nullptr;
   }
-  pool.push_back(texture);
+  pool.targets.push_back({.texture = texture});
   constexpr size_t kMaxPooledTargets = 3;
-  for (auto it = pool.begin();
-       pool.size() > kMaxPooledTargets && it != pool.end();) {
-    if (*it != texture && it->use_count() == 1) {
-      it = pool.erase(it);
+  for (auto it = pool.targets.begin();
+       pool.targets.size() > kMaxPooledTargets && it != pool.targets.end();) {
+    if (it->texture != texture && it->texture.use_count() == 1) {
+      it = pool.targets.erase(it);
     } else {
       ++it;
     }
   }
   return texture;
+}
+
+// Reelx P14: the attachments [pool] keeps for snapshot targets of [size] and
+// [format], or an empty set to fill (the pool keeps the two used last: an
+// export alternates between its frame and the frame packed for the encoder).
+SnapshotAttachments& AttachmentsFromPool(SnapshotTargetPool& pool,
+                                         ISize size,
+                                         PixelFormat format) {
+  std::vector<SnapshotAttachments>& sets = pool.attachments;
+  auto found = std::find_if(sets.begin(), sets.end(),
+                            [&](const SnapshotAttachments& set) {
+                              return set.size == size && set.format == format;
+                            });
+  if (found != sets.end()) {
+    std::rotate(found, found + 1, sets.end());
+    return sets.back();
+  }
+  constexpr size_t kMaxPooledAttachments = 2;
+  if (sets.size() >= kMaxPooledAttachments) {
+    sets.erase(sets.begin());
+  }
+  sets.push_back({.size = size, .format = format});
+  return sets.back();
+}
+
+// Reelx P14: gives [target] the depth/stencil texture of [attachments] (a new
+// one when it has none), the way Canvas does for a root target without one,
+// and keeps what the target draws with for the next snapshot. Returns the id
+// of the kept attachments, 0 when the target is not complete.
+uint64_t AttachFromPool(SnapshotTargetPool& pool,
+                        SnapshotAttachments& attachments,
+                        const Context& context,
+                        RenderTarget& target,
+                        bool msaa) {
+  target.SetupDepthStencilAttachments(
+      context, *context.GetResourceAllocator(), attachments.size, msaa,
+      "ImpellerOnscreen", Canvas::GetRootStencilConfig(),
+      attachments.depth_stencil);
+  std::shared_ptr<Texture> color_msaa =
+      msaa ? target.GetColorAttachment(0).texture : nullptr;
+  std::shared_ptr<Texture> depth_stencil =
+      target.GetDepthAttachment().has_value()
+          ? target.GetDepthAttachment()->texture
+          : nullptr;
+  if (!depth_stencil) {
+    // Canvas will try again with a texture of its own, which is not kept.
+    attachments.color_msaa = nullptr;
+    attachments.depth_stencil = nullptr;
+    attachments.id = 0;
+    return 0;
+  }
+  if (attachments.id == 0 || color_msaa != attachments.color_msaa ||
+      depth_stencil != attachments.depth_stencil) {
+    attachments.color_msaa = std::move(color_msaa);
+    attachments.depth_stencil = std::move(depth_stencil);
+    attachments.id = ++pool.last_attachments_id;
+  }
+  return attachments.id;
 }
 
 // Reelx P13: after a snapshot drew with the snapshots' host buffers, resets
@@ -1329,9 +1383,14 @@ std::shared_ptr<Texture> DisplayListToTexture(
     bool pooled_target,
     bool* pool_hit,
     bool snapshot_host_buffers,
-    bool* host_buffers_reset) {
+    bool* host_buffers_reset,
+    bool pooled_attachments,
+    bool* attachments_hit) {
   if (host_buffers_reset) {
     *host_buffers_reset = false;
+  }
+  if (attachments_hit) {
+    *attachments_hit = false;
   }
   int mip_count = 1;
   if (generate_mips) {
@@ -1348,6 +1407,30 @@ std::shared_ptr<Texture> DisplayListToTexture(
   // nothing holds any more. Only one-level targets: a reused texture's
   // mipmaps wouldn't be generated again.
   pooled_target = pooled_target && mip_count == 1;
+  // Reelx P14: with pooled attachments the target also draws with the MSAA
+  // colour and depth/stencil textures of the snapshot of this size before
+  // it. Not where MSAA resolves implicitly (OpenGL ES with
+  // EXT_multisampled_render_to_texture): there the MSAA texture is the
+  // snapshot itself.
+  pooled_attachments =
+      pooled_attachments &&
+      !context.GetContext()->GetCapabilities()->SupportsImplicitResolvingMSAA();
+  const PixelFormat format = target_pixel_format.value_or(
+      context.GetContext()->GetCapabilities()->GetDefaultColorFormat());
+  SnapshotTargetPool& pool =
+      context.GetContentContext().GetSnapshotTargetPool();
+  SnapshotAttachments* attachments = nullptr;
+  if (pooled_attachments) {
+    attachments = &AttachmentsFromPool(pool, size, format);
+    if (attachments_hit) {
+      *attachments_hit = attachments->id != 0;
+    }
+  } else {
+    pool.attachments.clear();
+  }
+  if (pooled_target || pooled_attachments) {
+    pool.frames_since_snapshot = 0;
+  }
   std::shared_ptr<Texture> color_target;
   if ((lossless_target && msaa) || pooled_target) {
     TextureDescriptor desc;
@@ -1356,8 +1439,7 @@ std::shared_ptr<Texture> DisplayListToTexture(
                    .resolve_storage_mode
              : impeller::RenderTarget::kDefaultColorAttachmentConfig
                    .storage_mode;
-    desc.format = target_pixel_format.value_or(
-        context.GetContext()->GetCapabilities()->GetDefaultColorFormat());
+    desc.format = format;
     desc.size = size;
     desc.compression_type = (msaa && !lossless_target)
                                 ? CompressionType::kLossy
@@ -1365,11 +1447,9 @@ std::shared_ptr<Texture> DisplayListToTexture(
     desc.usage = TextureUsage::kRenderTarget | TextureUsage::kShaderRead;
     desc.mip_count = mip_count;
     Allocator& allocator = *context.GetContext()->GetResourceAllocator();
-    color_target =
-        pooled_target ? TargetFromPool(
-                            context.GetContentContext().GetSnapshotTargetPool(),
-                            allocator, desc, pool_hit)
-                      : allocator.CreateTexture(desc);
+    color_target = pooled_target
+                       ? TargetFromPool(pool, allocator, desc, pool_hit)
+                       : allocator.CreateTexture(desc);
   }
   // Do not use the render target cache as the lifecycle of this texture
   // will outlive a particular frame.
@@ -1386,10 +1466,11 @@ std::shared_ptr<Texture> DisplayListToTexture(
         impeller::RenderTarget::
             kDefaultColorAttachmentConfigMSAA,  // color_attachment_config
         std::nullopt,                           // stencil_attachment_config
-        nullptr,                                // existing_color_msaa_texture
-        color_target,        // existing_color_resolve_texture
-        nullptr,             // existing_depth_stencil_texture
-        target_pixel_format  // target_format
+        attachments ? attachments->color_msaa
+                    : nullptr,  // existing_color_msaa_texture
+        color_target,           // existing_color_resolve_texture
+        nullptr,                // existing_depth_stencil_texture
+        target_pixel_format     // target_format
     );
   } else {
     target = render_target_allocator.CreateOffscreen(
@@ -1407,6 +1488,24 @@ std::shared_ptr<Texture> DisplayListToTexture(
   }
   if (!target.IsValid()) {
     return nullptr;
+  }
+  const uint64_t attachments_id =
+      attachments ? AttachFromPool(pool, *attachments, *context.GetContext(),
+                                   target, msaa)
+                  : 0;
+  if (pooled_target) {
+    // The framebuffer the backend cached for a reused target points at the
+    // MSAA and depth/stencil textures of the snapshot that made it. It
+    // stays only when this snapshot draws with those same textures.
+    for (SnapshotTarget& pooled : pool.targets) {
+      if (pooled.texture == color_target) {
+        if (attachments_id == 0 || pooled.attachments_id != attachments_id) {
+          pooled.texture->ForgetRenderTargetCaches();
+        }
+        pooled.attachments_id = attachments_id;
+        break;
+      }
+    }
   }
 
   // Reelx P13: from here to the cleanup below the snapshot emplaces into

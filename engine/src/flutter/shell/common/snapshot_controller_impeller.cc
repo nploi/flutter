@@ -20,13 +20,15 @@ namespace flutter {
 
 namespace {
 
-// Reelx P1 (lazyMips), P2a (targetPool), P3 (exactSnapshots) and P13
-// (snapshotBuffers) live in this file's snapshots.
+// Reelx P1 (lazyMips), P2a (targetPool), P3 (exactSnapshots), P13
+// (snapshotBuffers) and P14 (targetAttachments) live in this file's
+// snapshots.
 [[maybe_unused]] const bool kReelxSnapshotFeatures = [] {
   reelx::SetAvailable(reelx::Feature::kLazyMips);
   reelx::SetAvailable(reelx::Feature::kTargetPool);
   reelx::SetAvailable(reelx::Feature::kExactSnapshots);
   reelx::SetAvailable(reelx::Feature::kSnapshotBuffers);
+  reelx::SetAvailable(reelx::Feature::kTargetAttachments);
   return true;
 }();
 
@@ -81,12 +83,18 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
   // With snapshotBuffers what a snapshot's draws emplace goes into host
   // buffers that snapshots reset themselves; otherwise only an onscreen
   // frame resets them, and snapshots with no frame in between pile up.
+  // With targetAttachments (and targetPool) it also draws with the MSAA and
+  // depth/stencil textures of the snapshot of its size before it, and the
+  // backend keeps the framebuffer it made for the reused target.
   const bool lazy_mips = reelx::IsFeatureOn(reelx::Feature::kLazyMips);
   const bool pooled =
       lazy_mips && reelx::IsFeatureOn(reelx::Feature::kTargetPool);
   const bool own_buffers = reelx::IsFeatureOn(reelx::Feature::kSnapshotBuffers);
+  const bool pooled_attachments =
+      pooled && reelx::IsFeatureOn(reelx::Feature::kTargetAttachments);
   bool pool_hit = false;
   bool buffers_reset = false;
+  bool attachments_hit = false;
   std::shared_ptr<impeller::Texture> texture = impeller::DisplayListToTexture(
       display_list, render_target_size, *context,
       /*reset_host_buffer=*/false,
@@ -94,7 +102,12 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
       /*lossless_target=*/
       reelx::IsFeatureOn(reelx::Feature::kExactSnapshots),
       /*pooled_target=*/pooled, &pool_hit,
-      /*snapshot_host_buffers=*/own_buffers, &buffers_reset);
+      /*snapshot_host_buffers=*/own_buffers, &buffers_reset,
+      /*pooled_attachments=*/pooled_attachments, &attachments_hit);
+  if (texture && pooled_attachments) {
+    reelx::CountStat(attachments_hit ? reelx::Stat::kTargetAttachmentHits
+                                     : reelx::Stat::kTargetAttachmentMisses);
+  }
   if (texture && own_buffers) {
     reelx::CountStat(buffers_reset ? reelx::Stat::kSnapshotBufferResets
                                    : reelx::Stat::kSnapshotBufferHolds);

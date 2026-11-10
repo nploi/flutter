@@ -1600,6 +1600,10 @@ void Canvas::DrawAtlas(const std::shared_ptr<AtlasContents>& atlas_contents,
 /// Compositor Functionality
 /////////////////////////////////////////
 
+RenderTarget::AttachmentConfig Canvas::GetRootStencilConfig() {
+  return kDefaultStencilConfig;
+}
+
 void Canvas::SetupRenderPass() {
   renderer_.GetRenderTargetCache()->Start();
   ColorAttachment color0 = render_target_.GetColorAttachment(0);

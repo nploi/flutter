@@ -283,6 +283,10 @@ class Canvas {
   /// Visible for testing.
   static bool IsCompatibleWithSDFRendering(const Paint& paint);
 
+  /// Reelx P14: the depth/stencil configuration a root target without one
+  /// gets, for callers that attach a texture they kept before drawing.
+  static RenderTarget::AttachmentConfig GetRootStencilConfig();
+
  private:
   class BlurShape {
    public:

@@ -1018,6 +1018,17 @@ void ContentContext::ResetTransientsBuffers() {
   if (data_host_buffer_ != indexes_host_buffer_) {
     indexes_host_buffer_->Reset();
   }
+
+  // Reelx P14: this runs once per onscreen frame. When frames go by with no
+  // snapshot, the textures kept for the next one are only held memory.
+  SnapshotTargetPool& pool = snapshot_target_pool_;
+  if (pool.frames_since_snapshot < SnapshotTargetPool::kIdleFrames &&
+      ++pool.frames_since_snapshot == SnapshotTargetPool::kIdleFrames) {
+    pool.attachments.clear();
+    std::erase_if(pool.targets, [](const SnapshotTarget& target) {
+      return target.texture.use_count() == 1;
+    });
+  }
 }
 
 void ContentContext::UseSnapshotTransientsBuffers(bool use) {

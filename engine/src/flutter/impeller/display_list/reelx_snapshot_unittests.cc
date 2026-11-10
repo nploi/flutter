@@ -54,6 +54,31 @@ sk_sp<flutter::DisplayList> ManyRects() {
   return builder.Build();
 }
 
+// Clips inside clips, a rounded one among them: draws that need the
+// depth/stencil attachment, at any size.
+sk_sp<flutter::DisplayList> ClippedRects(ISize size) {
+  const float w = size.width;
+  const float h = size.height;
+  flutter::DisplayListBuilder builder;
+  flutter::DlPaint paint;
+  paint.setColor(flutter::DlColor::kGreen());
+  builder.DrawRect(flutter::DlRect::MakeWH(w, h), paint);
+  builder.Save();
+  builder.ClipRoundRect(
+      flutter::DlRoundRect::MakeRectXY(
+          flutter::DlRect::MakeXYWH(w / 8, h / 8, w * 3 / 4, h * 3 / 4), w / 6,
+          h / 6),
+      flutter::DlClipOp::kIntersect, /*is_aa=*/false);
+  paint.setColor(flutter::DlColor::kRed());
+  builder.DrawRect(flutter::DlRect::MakeWH(w, h), paint);
+  builder.ClipRect(flutter::DlRect::MakeXYWH(w / 4, h / 4, w / 4, h / 2),
+                   flutter::DlClipOp::kDifference, /*is_aa=*/false);
+  paint.setColor(flutter::DlColor::kBlue());
+  builder.DrawCircle(flutter::DlPoint(w / 2, h / 2), w / 2, paint);
+  builder.Restore();
+  return builder.Build();
+}
+
 SamplerDescriptor Sampler(MipFilter mip_filter) {
   SamplerDescriptor desc;
   desc.min_filter = desc.mag_filter = MinMagFilter::kLinear;
@@ -289,7 +314,8 @@ TEST_P(AiksTest, ReelxMipmappedTargetsAreNotPooled) {
                                       /*lossless_target=*/false,
                                       /*pooled_target=*/true, &hit);
   ASSERT_TRUE(texture);
-  EXPECT_TRUE(renderer.GetContentContext().GetSnapshotTargetPool().empty());
+  EXPECT_TRUE(
+      renderer.GetContentContext().GetSnapshotTargetPool().targets.empty());
 }
 
 // P1: a lazily mipmapped snapshot drawn at 1/8 with mipmaps gives the same
@@ -397,6 +423,204 @@ TEST_P(AiksTest, ReelxSnapshotsResetHostBuffersOfTheirOwn) {
   }
   EXPECT_GT(blocks(*frames_buffer), frames_blocks);
   EXPECT_LE(snapshots_blocks, frames_blocks);
+}
+
+// P14: snapshots of one size draw with one MSAA colour and one depth/stencil
+// texture, whether their own target is new or reused, and give the pixels of
+// snapshots that made their own.
+TEST_P(AiksTest, ReelxSnapshotsShareAttachments) {
+  AiksContext renderer(GetContext(), nullptr);
+  const SnapshotTargetPool& pool =
+      renderer.GetContentContext().GetSnapshotTargetPool();
+  const ISize size(256, 256);
+  auto snapshot = [&](const sk_sp<flutter::DisplayList>& list, bool pooled,
+                      bool* target_hit, bool* attachments_hit) {
+    return DisplayListToTexture(
+        list, size, renderer, /*reset_host_buffer=*/true,
+        /*generate_mips=*/false, /*target_pixel_format=*/std::nullopt,
+        /*lossless_target=*/false, /*pooled_target=*/pooled, target_hit,
+        /*snapshot_host_buffers=*/false, /*host_buffers_reset=*/nullptr,
+        /*pooled_attachments=*/pooled, attachments_hit);
+  };
+  const std::vector<uint8_t> clipped = ReadBack(
+      GetContext(), snapshot(ClippedRects(size), false, nullptr, nullptr));
+  const std::vector<uint8_t> stripes =
+      ReadBack(GetContext(), snapshot(Stripes(), false, nullptr, nullptr));
+  ASSERT_NE(MaxDifference(clipped, stripes), 0);
+  EXPECT_TRUE(pool.attachments.empty());
+
+  bool target_hit = true;
+  bool attachments_hit = true;
+  auto first =
+      snapshot(ClippedRects(size), true, &target_hit, &attachments_hit);
+  ASSERT_TRUE(first);
+  EXPECT_FALSE(target_hit);
+  EXPECT_FALSE(attachments_hit);
+  ASSERT_EQ(pool.attachments.size(), 1u);
+  const SnapshotAttachments kept = pool.attachments.front();
+  EXPECT_NE(kept.id, 0u);
+  ASSERT_TRUE(kept.depth_stencil);
+  EXPECT_EQ(kept.depth_stencil->GetSize(), size);
+  const bool msaa = GetContext()->GetCapabilities()->SupportsOffscreenMSAA();
+  EXPECT_EQ(kept.color_msaa != nullptr, msaa);
+  EXPECT_EQ(kept.depth_stencil->GetTextureDescriptor().sample_count,
+            msaa ? SampleCount::kCount4 : SampleCount::kCount1);
+
+  // A second target while the first is held: its own texture, the same
+  // attachments. The first keeps its pixels.
+  auto second = snapshot(Stripes(), true, &target_hit, &attachments_hit);
+  ASSERT_TRUE(second);
+  EXPECT_FALSE(target_hit);
+  EXPECT_TRUE(attachments_hit);
+  EXPECT_EQ(MaxDifference(ReadBack(GetContext(), second), stripes), 0);
+  EXPECT_EQ(MaxDifference(ReadBack(GetContext(), first), clipped), 0);
+
+  // Reused targets, each drawn again and again with what the backend
+  // cached for it.
+  for (int i = 0; i < 6; i++) {
+    const bool odd = i % 2 == 1;
+    Texture* released = (odd ? second : first).get();
+    (odd ? second : first).reset();
+    auto reused = snapshot(odd ? ClippedRects(size) : Stripes(), true,
+                           &target_hit, &attachments_hit);
+    ASSERT_TRUE(reused);
+    EXPECT_TRUE(target_hit) << i;
+    EXPECT_TRUE(attachments_hit) << i;
+    EXPECT_EQ(reused.get(), released) << i;
+    EXPECT_EQ(
+        MaxDifference(ReadBack(GetContext(), reused), odd ? clipped : stripes),
+        0)
+        << i;
+    (odd ? second : first) = reused;
+  }
+  ASSERT_EQ(pool.attachments.size(), 1u);
+  EXPECT_EQ(pool.attachments.front().id, kept.id);
+  EXPECT_EQ(pool.attachments.front().color_msaa, kept.color_msaa);
+  EXPECT_EQ(pool.attachments.front().depth_stencil, kept.depth_stencil);
+  for (const SnapshotTarget& target : pool.targets) {
+    EXPECT_EQ(target.attachments_id, kept.id);
+  }
+
+  // Without pooled attachments the pool lets them go, and a reused target
+  // draws with textures of its own again.
+  first.reset();
+  auto without = DisplayListToTexture(
+      ClippedRects(size), size, renderer, /*reset_host_buffer=*/true,
+      /*generate_mips=*/false, /*target_pixel_format=*/std::nullopt,
+      /*lossless_target=*/false, /*pooled_target=*/true, &target_hit);
+  ASSERT_TRUE(without);
+  EXPECT_TRUE(target_hit);
+  EXPECT_TRUE(pool.attachments.empty());
+  EXPECT_EQ(MaxDifference(ReadBack(GetContext(), without), clipped), 0);
+}
+
+// P14: the pool keeps the attachments of the two sizes used last. A target
+// reused after its size's attachments were replaced draws with the new ones.
+TEST_P(AiksTest, ReelxAttachmentsFollowTheSnapshotSize) {
+  AiksContext renderer(GetContext(), nullptr);
+  const SnapshotTargetPool& pool =
+      renderer.GetContentContext().GetSnapshotTargetPool();
+  auto snapshot = [&](ISize size, bool pooled, bool* attachments_hit) {
+    return DisplayListToTexture(
+        ClippedRects(size), size, renderer, /*reset_host_buffer=*/true,
+        /*generate_mips=*/false, /*target_pixel_format=*/std::nullopt,
+        /*lossless_target=*/false, /*pooled_target=*/pooled,
+        /*pool_hit=*/nullptr, /*snapshot_host_buffers=*/false,
+        /*host_buffers_reset=*/nullptr, /*pooled_attachments=*/pooled,
+        attachments_hit);
+  };
+  const ISize large(256, 256);
+  const ISize medium(200, 120);
+  const ISize small(64, 64);
+  auto expected = [&](ISize size) {
+    return ReadBack(GetContext(), snapshot(size, false, nullptr));
+  };
+  const std::vector<uint8_t> large_pixels = expected(large);
+  const std::vector<uint8_t> medium_pixels = expected(medium);
+  const std::vector<uint8_t> small_pixels = expected(small);
+  auto check = [&](ISize size, const std::vector<uint8_t>& pixels,
+                   bool expect_hit) {
+    bool hit = !expect_hit;
+    auto texture = snapshot(size, true, &hit);
+    ASSERT_TRUE(texture);
+    EXPECT_EQ(hit, expect_hit) << size.width;
+    EXPECT_EQ(MaxDifference(ReadBack(GetContext(), texture), pixels), 0)
+        << size.width;
+    ASSERT_FALSE(pool.attachments.empty());
+    EXPECT_EQ(pool.attachments.back().size, size);
+    EXPECT_EQ(pool.attachments.back().depth_stencil->GetSize(), size);
+  };
+
+  // An export's two sizes, alternating: one miss each.
+  check(large, large_pixels, false);
+  check(medium, medium_pixels, false);
+  for (int i = 0; i < 3; i++) {
+    check(large, large_pixels, true);
+    check(medium, medium_pixels, true);
+  }
+  EXPECT_EQ(pool.attachments.size(), 2u);
+  const uint64_t large_id = pool.attachments.front().id;
+
+  // A third size takes the place of the one used longest ago.
+  check(small, small_pixels, false);
+  EXPECT_EQ(pool.attachments.size(), 2u);
+  EXPECT_EQ(pool.attachments.front().size, medium);
+  check(medium, medium_pixels, true);
+
+  // The large target is still pooled; its attachments are new.
+  check(large, large_pixels, false);
+  EXPECT_NE(pool.attachments.back().id, large_id);
+  check(large, large_pixels, true);
+}
+
+// P14: after enough onscreen frames without a snapshot the pool holds only
+// what something else holds too.
+TEST_P(AiksTest, ReelxIdleSnapshotPoolLetsGo) {
+  AiksContext renderer(GetContext(), nullptr);
+  ContentContext& content = renderer.GetContentContext();
+  const SnapshotTargetPool& pool = content.GetSnapshotTargetPool();
+  const ISize size(256, 256);
+  auto snapshot = [&](bool* attachments_hit) {
+    return DisplayListToTexture(
+        ClippedRects(size), size, renderer, /*reset_host_buffer=*/true,
+        /*generate_mips=*/false, /*target_pixel_format=*/std::nullopt,
+        /*lossless_target=*/false, /*pooled_target=*/true,
+        /*pool_hit=*/nullptr, /*snapshot_host_buffers=*/false,
+        /*host_buffers_reset=*/nullptr, /*pooled_attachments=*/true,
+        attachments_hit);
+  };
+  auto held = snapshot(nullptr);
+  ASSERT_TRUE(held);
+  const std::vector<uint8_t> pixels = ReadBack(GetContext(), held);
+  ASSERT_TRUE(snapshot(nullptr));
+  EXPECT_EQ(pool.targets.size(), 2u);
+  EXPECT_EQ(pool.attachments.size(), 1u);
+
+  // Frames with a snapshot now and then: nothing goes.
+  for (uint32_t i = 0; i < SnapshotTargetPool::kIdleFrames - 1; i++) {
+    content.ResetTransientsBuffers();
+  }
+  bool hit = false;
+  ASSERT_TRUE(snapshot(&hit));
+  EXPECT_TRUE(hit);
+  for (uint32_t i = 0; i < SnapshotTargetPool::kIdleFrames - 1; i++) {
+    content.ResetTransientsBuffers();
+  }
+  EXPECT_EQ(pool.targets.size(), 2u);
+  EXPECT_EQ(pool.attachments.size(), 1u);
+
+  // One more frame: the attachments and the target nothing holds go.
+  content.ResetTransientsBuffers();
+  EXPECT_TRUE(pool.attachments.empty());
+  ASSERT_EQ(pool.targets.size(), 1u);
+  EXPECT_EQ(pool.targets.front().texture, held);
+
+  // The next snapshot starts over.
+  auto next = snapshot(&hit);
+  ASSERT_TRUE(next);
+  EXPECT_FALSE(hit);
+  EXPECT_EQ(MaxDifference(ReadBack(GetContext(), next), pixels), 0);
+  EXPECT_EQ(MaxDifference(ReadBack(GetContext(), held), pixels), 0);
 }
 
 }  // namespace testing

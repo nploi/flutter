@@ -136,5 +136,49 @@ TEST(RenderPassVK, ForgottenRenderTargetCachesMakeANewFramebuffer) {
   EXPECT_NE(new_framebuffer, old_framebuffer);
 }
 
+// Reelx P14: a render target made again from the same MSAA, resolve and
+// depth/stencil textures (a pooled snapshot target with pooled attachments)
+// draws with the framebuffer and render pass cached for the first one.
+TEST(RenderPassVK, KeptAttachmentsKeepTheFramebuffer) {
+  std::shared_ptr<ContextVK> context = MockVulkanContextBuilder().Build();
+  RenderTargetAllocator allocator(context->GetResourceAllocator());
+
+  RenderTarget first = allocator.CreateOffscreenMSAA(*context, {4, 4}, 1);
+  std::shared_ptr<Texture> resolve =
+      first.GetColorAttachment(0).resolve_texture;
+  {
+    auto cmd_buffer = context->CreateCommandBuffer();
+    auto render_pass = cmd_buffer->CreateRenderPass(first);
+    ASSERT_TRUE(render_pass);
+  }
+  TextureVK& resolve_vk = TextureVK::Cast(*resolve);
+  auto framebuffer =
+      resolve_vk.GetCachedFrameData(SampleCount::kCount4).framebuffer;
+  ASSERT_NE(framebuffer, nullptr);
+  auto created = [&](const char* function) {
+    auto called = GetMockVulkanFunctions(context->GetDevice());
+    return std::count(called->begin(), called->end(), function);
+  };
+  const auto framebuffers = created("vkCreateFramebuffer");
+  const auto render_passes = created("vkCreateRenderPass");
+
+  RenderTarget second = allocator.CreateOffscreenMSAA(
+      *context, {4, 4}, 1, "Second",
+      RenderTarget::kDefaultColorAttachmentConfigMSAA,
+      RenderTarget::kDefaultStencilAttachmentConfig,
+      /*existing_color_msaa_texture=*/first.GetColorAttachment(0).texture,
+      /*existing_color_resolve_texture=*/resolve,
+      /*existing_depth_stencil_texture=*/first.GetDepthAttachment()->texture);
+  {
+    auto cmd_buffer = context->CreateCommandBuffer();
+    auto render_pass = cmd_buffer->CreateRenderPass(second);
+    ASSERT_TRUE(render_pass);
+  }
+  EXPECT_EQ(resolve_vk.GetCachedFrameData(SampleCount::kCount4).framebuffer,
+            framebuffer);
+  EXPECT_EQ(created("vkCreateFramebuffer"), framebuffers);
+  EXPECT_EQ(created("vkCreateRenderPass"), render_passes);
+}
+
 }  // namespace testing
 }  // namespace impeller

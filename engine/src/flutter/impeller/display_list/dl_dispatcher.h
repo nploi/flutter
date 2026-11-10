@@ -457,7 +457,9 @@ std::shared_ptr<Texture> DisplayListToTexture(
     bool pooled_target = false,
     bool* pool_hit = nullptr,
     bool snapshot_host_buffers = false,
-    bool* host_buffers_reset = nullptr);
+    bool* host_buffers_reset = nullptr,
+    bool pooled_attachments = false,
+    bool* attachments_hit = nullptr);
 
 /// @brief Render the provided display list to the render target.
 ///
