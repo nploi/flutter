@@ -27,6 +27,10 @@ done
 [[ "$(uname -s)" == Darwin ]] || die "the macOS engine builds on a Mac"
 command -v gclient >/dev/null || die "depot_tools (gclient) is not on PATH"
 command -v ninja >/dev/null || die "ninja (from depot_tools) is not on PATH"
+# Xcode 26 ships without the Metal compiler; ANGLE's and Impeller's shaders
+# need it, and the build would otherwise stop well into the first config.
+xcrun -sdk macosx metal --version >/dev/null 2>&1 ||
+  die "no Metal toolchain: run xcodebuild -downloadComponent MetalToolchain"
 
 root="$(git rev-parse --show-toplevel)"
 src="$root/engine/src"
