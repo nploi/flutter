@@ -7,6 +7,9 @@
 
 // Reelx P4 (fdHandoff): the per-descriptor writer behind
 // ReelxImageReadbackToFd and ReelxRepeatLastToFd (reelx_handoff.cc).
+// POSIX only; not built on Windows.
+
+#if !defined(_WIN32)
 
 #include <errno.h>
 #include <unistd.h>
@@ -181,5 +184,7 @@ class FdWriter : public std::enable_shared_from_this<FdWriter> {
 
 }  // namespace reelx
 }  // namespace flutter
+
+#endif  // !defined(_WIN32)
 
 #endif  // FLUTTER_LIB_UI_REELX_REELX_HANDOFF_H_

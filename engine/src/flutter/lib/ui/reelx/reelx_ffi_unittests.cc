@@ -4,7 +4,9 @@
 
 #include "flutter/lib/ui/reelx/reelx_ffi.h"
 
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 
 #include <string>
 
@@ -84,6 +86,7 @@ TEST_F(ReelxFfiTest, StatsAreCountedAndReported) {
 // P4: what the hand-off decides before any image or Dart port is involved
 // (the readback path is covered by Reelx's gated export suite on the
 // patched engine).
+#if !defined(_WIN32)
 TEST_F(ReelxFfiTest, HandoffRepeatNeedsAFrameFirst) {
   SetAvailableForTesting(Feature::kFdHandoff, true);
   int fds[2];
@@ -102,6 +105,7 @@ TEST_F(ReelxFfiTest, HandoffIsRefusedWhileTheFeatureIsOff) {
 TEST_F(ReelxFfiTest, ReleasingAnUnknownDescriptorIsFine) {
   EXPECT_EQ(ReelxReleaseFd(12345), 0);
 }
+#endif  // !defined(_WIN32)
 
 }  // namespace testing
 }  // namespace reelx
