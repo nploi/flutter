@@ -51,8 +51,8 @@ static absl::NoDestructor<std::unique_ptr<Shell>> g_shell;
 namespace {
 #if TESTER_ENABLE_METAL
 // Reelx (feature testerMetal): `flutter test --enable-impeller` never passes
-// --impeller-backend, and a mac host build has no Vulkan, so without this the
-// tester has no context at all. With no backend asked for, use Metal.
+// --impeller-backend, so on a Mac the tester renders with SwiftShader's
+// Vulkan, on the CPU. With no backend asked for, use Metal.
 bool UsesMetal(const Settings& settings) {
   if (settings.requested_rendering_backend == "metal") {
     return true;
@@ -67,6 +67,13 @@ std::unique_ptr<TesterContext> CreateTesterContext(const Settings& settings) {
 #if TESTER_ENABLE_METAL
   if (settings.enable_impeller && UsesMetal(settings)) {
     tester_context = TesterContextMTLFactory::Create();
+    if (tester_context) {
+      // Not replaced by the Vulkan context below.
+      if (settings.verbose_logging) {
+        FML_LOG(INFO) << "Tester context: Metal";
+      }
+      return tester_context;
+    }
   }
 #endif
 #if TESTER_ENABLE_OPENGLES
@@ -81,6 +88,9 @@ std::unique_ptr<TesterContext> CreateTesterContext(const Settings& settings) {
        settings.requested_rendering_backend == "vulkan")) {
     tester_context =
         TesterContextVKFactory::Create(settings.enable_vulkan_validation);
+    if (tester_context && settings.verbose_logging) {
+      FML_LOG(INFO) << "Tester context: Vulkan";
+    }
   }
 #endif
   return tester_context;

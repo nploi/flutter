@@ -82,9 +82,10 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 
 ## P6 — Metal by default in `flutter_tester` on macOS
 
-- **Why**: `flutter test --enable-impeller` on macOS can't create a tester context (no `--impeller-backend`, no Vulkan), so headless renders fall back to Skia software.
-- **Files**: `engine/src/flutter/shell/testing/tester_main.cc` (`UsesMetal`: no backend asked for → Metal while `testerMetal` is on; the feature is marked available in `main` when Metal is compiled in), `shell/testing/BUILD.gn` (`//flutter/lib/ui` for the switch).
-- **Tests**: `reelx/tools/test/tester_metal_test.sh` (macOS: `--enable-impeller` with and without `--impeller-backend=metal` gets past "Could not create tester context"); the decision itself compiled and checked against `reelx_ffi` off-tree.
+- **Status**: on `engine-perf/3.47.9-wip`; checked on an Intel Mac (MacBook Pro 16" 2019, Radeon Pro 5300M, 2026-11-10): the first version made a Metal context and then let the Vulkan one replace it, so the tester still rendered on the CPU. Fixed (the Metal context is returned) and the check now asks the tester which context it opened.
+- **Why**: `flutter test --enable-impeller` never passes `--impeller-backend`, so on macOS the tester renders with SwiftShader's Vulkan, on the CPU.
+- **Files**: `engine/src/flutter/shell/testing/tester_main.cc` (`UsesMetal`: no backend asked for → Metal while `testerMetal` is on, returned before the Vulkan context is tried; `--verbose-logging` names the context; the feature is marked available in `main` when Metal is compiled in), `shell/testing/BUILD.gn` (`//flutter/lib/ui` for the switch).
+- **Tests**: `reelx/tools/test/tester_metal_test.sh` (macOS: with `--verbose-logging`, `--enable-impeller` with and without `--impeller-backend=metal` logs `Tester context: Metal`; a stock tester logs nothing, and `--impeller-backend=vulkan` logs `Tester context: Vulkan`).
 - **Verify**: after a rebase, `REELX_ENGINE_OUT=engine/src/out reelx/tools/test/tester_metal_test.sh`; a CLI render with the engine folder logs the engine and renders.
 - **Feature**: `testerMetal`
 
