@@ -15,6 +15,7 @@
 #include "flutter/impeller/display_list/dl_runtime_effect_impeller.h"  // nogncheck
 #endif
 #include "flutter/impeller/runtime_stage/runtime_stage.h"
+#include "flutter/lib/ui/reelx/reelx_shader_bytes.h"
 #include "flutter/lib/ui/ui_dart_state.h"
 #include "flutter/lib/ui/window/platform_configuration.h"
 
@@ -135,7 +136,11 @@ std::string FragmentProgram::initFromAsset(const std::string& asset_name) {
   std::shared_ptr<AssetManager> asset_manager =
       ui_dart_state->platform_configuration()->client()->GetAssetManager();
 
-  std::unique_ptr<fml::Mapping> data = asset_manager->GetAsMapping(asset_name);
+  // Reelx: bytes registered with ReelxRegisterShaderBytes come first.
+  std::unique_ptr<fml::Mapping> data = reelx::GetRegisteredShader(asset_name);
+  if (data == nullptr) {
+    data = asset_manager->GetAsMapping(asset_name);
+  }
   if (data == nullptr) {
     return std::string("Asset '") + asset_name + std::string("' not found");
   }
