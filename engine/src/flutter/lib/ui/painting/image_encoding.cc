@@ -178,13 +178,8 @@ void EncodeImageAndInvokeDataCallback(
   // IO thread, which image decoding also uses.
   auto encode_task = [encode_now = std::move(encode_now), concurrent_runner](
                          const fml::StatusOr<sk_sp<SkImage>>& raster_image) {
-    if (concurrent_runner &&
-        reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback)) {
-      concurrent_runner->PostTask(
-          [encode_now, raster_image]() { encode_now(raster_image); });
-      return;
-    }
-    encode_now(raster_image);
+    DispatchEncode(concurrent_runner,
+                   [encode_now, raster_image]() { encode_now(raster_image); });
   };
 
   FML_DCHECK(image);
@@ -207,6 +202,17 @@ void EncodeImageAndInvokeDataCallback(
 }
 
 }  // namespace
+
+void DispatchEncode(
+    const std::shared_ptr<fml::ConcurrentTaskRunner>& concurrent_runner,
+    std::function<void()> encode) {
+  if (concurrent_runner &&
+      reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback)) {
+    concurrent_runner->PostTask(std::move(encode));
+    return;
+  }
+  encode();
+}
 
 Dart_Handle EncodeImage(CanvasImage* canvas_image,
                         int format,

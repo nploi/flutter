@@ -5,6 +5,10 @@
 #ifndef FLUTTER_LIB_UI_PAINTING_IMAGE_ENCODING_IMPL_H_
 #define FLUTTER_LIB_UI_PAINTING_IMAGE_ENCODING_IMPL_H_
 
+#include <functional>
+#include <memory>
+
+#include "flutter/fml/concurrent_message_loop.h"
 #include "flutter/lib/ui/ui_dart_state.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
@@ -13,6 +17,13 @@
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
 
 namespace flutter {
+
+/// Reelx P2c: runs [encode] (a readback's copy or swizzle) on
+/// [concurrent_runner] while oneCopyReadback is on, else at once on the
+/// calling thread (the IO thread), as before.
+void DispatchEncode(
+    const std::shared_ptr<fml::ConcurrentTaskRunner>& concurrent_runner,
+    std::function<void()> encode);
 
 template <typename SyncSwitch>
 sk_sp<SkImage> ConvertToRasterUsingResourceContext(
