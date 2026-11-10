@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include "png.h"
@@ -731,6 +732,37 @@ TEST(ImageEncodingReelxTest, OneCopyUnmodifiedIsTheImagesOwnMemory) {
   std::vector<uint8_t> copy(data->bytes(), data->bytes() + data->size());
   image.reset();
   EXPECT_EQ(0, std::memcmp(copy.data(), data->data(), copy.size()));
+}
+
+// Reelx P2c: with oneCopyReadback the copy runs on a concurrent worker,
+// without it on the calling thread as before.
+TEST(ImageEncodingReelxTest, CopyRunsOnAWorkerWhileOneCopyIsOn) {
+  auto loop = fml::ConcurrentMessageLoop::Create(1);
+  const std::thread::id caller = std::this_thread::get_id();
+
+  reelx::SetAvailableForTesting(reelx::Feature::kOneCopyReadback, true);
+  fml::AutoResetWaitableEvent ran;
+  std::thread::id on;
+  DispatchEncode(loop->GetTaskRunner(), [&] {
+    on = std::this_thread::get_id();
+    ran.Signal();
+  });
+  ran.Wait();
+  EXPECT_NE(on, caller);
+
+  reelx::SetAvailableForTesting(reelx::Feature::kOneCopyReadback, false);
+  bool ran_inline = false;
+  DispatchEncode(loop->GetTaskRunner(),
+                 [&] { ran_inline = std::this_thread::get_id() == caller; });
+  EXPECT_TRUE(ran_inline);
+
+  // No worker runner (as before the patch): at once.
+  reelx::SetAvailableForTesting(reelx::Feature::kOneCopyReadback, true);
+  ran_inline = false;
+  DispatchEncode(nullptr,
+                 [&] { ran_inline = std::this_thread::get_id() == caller; });
+  EXPECT_TRUE(ran_inline);
+  reelx::ResetFeaturesForTesting();
 }
 
 }  // namespace testing

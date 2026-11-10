@@ -9,6 +9,7 @@
 // failed). The last frame written to each descriptor is kept, so a reused
 // frame is written again with no render or readback.
 
+#include "flutter/lib/ui/reelx/reelx_handoff.h"
 #include "flutter/lib/ui/reelx/reelx_ffi.h"
 
 #include <errno.h>
@@ -47,183 +48,6 @@ namespace {
   return true;
 }();
 
-constexpr int64_t kStatusOk = 0;
-constexpr int64_t kStatusReadbackFailed = 1;
-constexpr int64_t kStatusWriteFailed = 2;
-
-// 64-bit digest of a frame's bytes, compared only with other digests from
-// this engine: FNV-1a over 8-byte words, then the tail, then a final mix.
-uint64_t Digest(const uint8_t* data, size_t length) {
-  uint64_t hash = 0xcbf29ce484222325ull;
-  size_t i = 0;
-  for (; i + 8 <= length; i += 8) {
-    uint64_t word;
-    std::memcpy(&word, data + i, 8);
-    hash = (hash ^ word) * 0x100000001b3ull;
-  }
-  for (; i < length; i++) {
-    hash = (hash ^ data[i]) * 0x100000001b3ull;
-  }
-  hash ^= hash >> 33;
-  hash *= 0xff51afd7ed558ccdull;
-  hash ^= hash >> 33;
-  return hash;
-}
-
-void Post(int64_t port,
-          int64_t token,
-          int64_t status,
-          int64_t bytes,
-          uint64_t digest,
-          int64_t error) {
-  Dart_CObject values[5];
-  Dart_CObject* pointers[5];
-  int64_t fields[5] = {token, status, bytes, static_cast<int64_t>(digest),
-                       error};
-  int count = status == kStatusWriteFailed ? 5 : 4;
-  for (int i = 0; i < count; i++) {
-    values[i].type = Dart_CObject_kInt64;
-    values[i].value.as_int64 = fields[i];
-    pointers[i] = &values[i];
-  }
-  Dart_CObject message;
-  message.type = Dart_CObject_kArray;
-  message.value.as_array.length = count;
-  message.value.as_array.values = pointers;
-  Dart_PostCObject(port, &message);
-}
-
-/// One descriptor's writer: requests are written in the order they were
-/// made, each once its bytes are ready, on the writer's own thread.
-class FdWriter : public std::enable_shared_from_this<FdWriter> {
- public:
-  explicit FdWriter(int fd) : fd_(fd) {}
-
-  void Start() {
-    std::thread([self = shared_from_this()] { self->Run(); }).detach();
-  }
-
-  /// A slot for the next readback, in call order.
-  uint64_t Reserve(int64_t port, int64_t token) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    uint64_t slot = next_slot_++;
-    slots_[slot] = Slot{port, token, false, false, nullptr};
-    has_frames_ = true;
-    return slot;
-  }
-
-  /// Queues a repeat of the frame written just before it (resolved when it
-  /// is written, so a frame still pending is the one repeated). False when
-  /// no frame was ever asked for on this descriptor.
-  bool QueueRepeat(int64_t port, int64_t token) {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!has_frames_) {
-        return false;
-      }
-      slots_[next_slot_++] = Slot{port, token, true, true, nullptr};
-    }
-    cv_.notify_one();
-    return true;
-  }
-
-  /// The bytes for [slot], or null when its readback failed.
-  void Fulfil(uint64_t slot, sk_sp<SkData> data) {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      auto it = slots_.find(slot);
-      if (it == slots_.end()) {
-        return;
-      }
-      it->second.ready = true;
-      it->second.data = std::move(data);
-    }
-    cv_.notify_one();
-  }
-
-  /// No more requests: the thread writes or fails what is pending, then
-  /// ends. Pending slots whose bytes never come are reported as failed.
-  void Stop() {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      stopping_ = true;
-    }
-    cv_.notify_one();
-  }
-
- private:
-  struct Slot {
-    int64_t port;
-    int64_t token;
-    bool ready;
-    bool repeat;
-    sk_sp<SkData> data;
-  };
-
-  void Run() {
-    while (true) {
-      Slot slot;
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        // The next slot in call order once its bytes are ready; after Stop,
-        // whatever is next (a slot still waiting for bytes fails).
-        cv_.wait(lock, [this] {
-          auto it = slots_.find(written_);
-          return stopping_ || (it != slots_.end() && it->second.ready);
-        });
-        auto it = slots_.find(written_);
-        if (it == slots_.end()) {
-          return;  // Stopping with nothing pending.
-        }
-        slot = std::move(it->second);
-        slots_.erase(it);
-        written_++;
-        if (slot.repeat) {
-          slot.data = last_;
-        }
-      }
-      if (!slot.ready || !slot.data) {
-        Post(slot.port, slot.token, kStatusReadbackFailed, 0, 0, 0);
-        continue;
-      }
-      const uint8_t* bytes = slot.data->bytes();
-      size_t length = slot.data->size();
-      size_t offset = 0;
-      int error = 0;
-      while (offset < length) {
-        ssize_t n = write(fd_, bytes + offset, length - offset);
-        if (n < 0 && errno == EINTR) {
-          continue;
-        }
-        if (n <= 0) {
-          error = n < 0 ? errno : EIO;
-          break;
-        }
-        offset += static_cast<size_t>(n);
-      }
-      if (error != 0) {
-        Post(slot.port, slot.token, kStatusWriteFailed, offset, 0, error);
-        continue;
-      }
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        last_ = slot.data;
-      }
-      Post(slot.port, slot.token, kStatusOk, length, Digest(bytes, length), 0);
-    }
-  }
-
-  const int fd_;
-  std::mutex mutex_;
-  std::condition_variable cv_;
-  std::map<uint64_t, Slot> slots_;
-  uint64_t next_slot_ = 0;
-  uint64_t written_ = 0;
-  bool stopping_ = false;
-  bool has_frames_ = false;
-  sk_sp<SkData> last_;
-};
-
 std::mutex& WritersMutex() {
   static std::mutex mutex;
   return mutex;
@@ -251,6 +75,39 @@ std::shared_ptr<FdWriter> WriterFor(int fd, bool create) {
 }
 
 }  // namespace
+
+void PostToDartPort(int64_t port, const std::vector<int64_t>& message) {
+  std::vector<Dart_CObject> values(message.size());
+  std::vector<Dart_CObject*> pointers(message.size());
+  for (size_t i = 0; i < message.size(); i++) {
+    values[i].type = Dart_CObject_kInt64;
+    values[i].value.as_int64 = message[i];
+    pointers[i] = &values[i];
+  }
+  Dart_CObject array;
+  array.type = Dart_CObject_kArray;
+  array.value.as_array.length = static_cast<intptr_t>(message.size());
+  array.value.as_array.values = pointers.data();
+  Dart_PostCObject(port, &array);
+}
+
+uint64_t FrameDigest(const uint8_t* data, size_t length) {
+  uint64_t hash = 0xcbf29ce484222325ull;
+  size_t i = 0;
+  for (; i + 8 <= length; i += 8) {
+    uint64_t word;
+    std::memcpy(&word, data + i, 8);
+    hash = (hash ^ word) * 0x100000001b3ull;
+  }
+  for (; i < length; i++) {
+    hash = (hash ^ data[i]) * 0x100000001b3ull;
+  }
+  hash ^= hash >> 33;
+  hash *= 0xff51afd7ed558ccdull;
+  hash ^= hash >> 33;
+  return hash;
+}
+
 }  // namespace reelx
 }  // namespace flutter
 
