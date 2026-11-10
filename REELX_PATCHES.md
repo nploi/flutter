@@ -16,7 +16,7 @@ git switch -c engine-perf/<new> engine-perf/3.47.9
 git rebase --onto <new> 3.47.9
 ```
 
-Then follow each patch's **Verify** steps, rebuild (`reelx/tools/build_engine.sh`), package (`reelx/tools/package_artifacts.sh`), and re-run the export benchmark before releasing `engine-<new>-ext.<n>`.
+Then follow each patch's **Verify** steps, rebuild (`reelx/tools/build_engine.sh`), package (`reelx/tools/package_artifacts.py`; the `Engine release` workflow does all platforms), and re-run the export benchmark before releasing `engine-<new>-ext.<n>`.
 
 ## Entry format
 

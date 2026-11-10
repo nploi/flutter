@@ -7,4 +7,8 @@ for t in "$here"/*_test.sh; do
   echo "== $(basename "$t")"
   "$t" || status=1
 done
+for t in "$here"/*_test.py; do
+  echo "== $(basename "$t")"
+  python3 "$t" || status=1
+done
 exit $status

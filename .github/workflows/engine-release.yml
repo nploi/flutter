@@ -1,0 +1,317 @@
+# Builds an engine release from a tag and attaches it to a draft GitHub
+# release of this repository:
+#
+#   git tag engine-3.47.9-ext.1 <commit on engine-perf/3.47.9(-wip)>
+#   git push origin engine-3.47.9-ext.1
+#
+# The tag names the Flutter release the patches sit on and the patch set
+# (ext.<n>) the engine reports. Each platform builds on its own runner; the
+# assets (see reelx/tools/package_artifacts.py) are uploaded to the draft,
+# then manifest.json and SHA256SUMS. Nothing is public until the draft is
+# published by hand (`gh release edit <tag> --draft=false`). Assets are never
+# replaced: to rebuild, delete the draft and push the tag again.
+name: Engine release
+
+on:
+  push:
+    tags: ['engine-*-ext.*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: engine-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.ref_name }}
+
+jobs:
+  prepare:
+    if: github.repository != 'flutter/flutter'
+    runs-on: ubuntu-24.04
+    outputs:
+      flutter_version: ${{ steps.tag.outputs.flutter_version }}
+      patch_set: ${{ steps.tag.outputs.patch_set }}
+      engine_revision: ${{ steps.stock.outputs.engine_revision }}
+      content_hash: ${{ steps.stock.outputs.content_hash }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Tag
+        id: tag
+        run: |
+          if [[ ! "$TAG" =~ ^engine-([0-9]+\.[0-9]+\.[0-9]+)-(ext\.[0-9]+)$ ]]; then
+            echo "::error::$TAG is not engine-<flutter>-ext.<n>"; exit 1
+          fi
+          echo "flutter_version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "patch_set=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+
+      # An app built by stock Flutter checks the engine against these: the
+      # engine revision and content hash its `flutter --version` reports.
+      - name: The stock Flutter's identity
+        id: stock
+        run: |
+          git clone --quiet --depth 1 --branch "${{ steps.tag.outputs.flutter_version }}" https://github.com/flutter/flutter.git sdk
+          machine="$(sdk/bin/flutter --version --machine)"
+          echo "$machine"
+          echo "engine_revision=$(jq -r .engineRevision <<<"$machine")" >> "$GITHUB_OUTPUT"
+          echo "content_hash=$(jq -r .engineContentHash <<<"$machine")" >> "$GITHUB_OUTPUT"
+          git clone --quiet --depth 1 --branch "$TAG" "https://github.com/$GITHUB_REPOSITORY.git" fork
+          ours="$(cat fork/bin/internal/engine.version)"
+          theirs="$(jq -r .engineRevision <<<"$machine")"
+          if [ "$ours" != "$theirs" ]; then
+            echo "::error::$TAG sits on engine $ours, Flutter ${{ steps.tag.outputs.flutter_version }} is $theirs"; exit 1
+          fi
+
+      - name: Draft release
+        run: |
+          if state="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$state" != true ]; then echo "::error::$TAG is already published"; exit 1; fi
+            echo "draft $TAG exists"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+              --title "Engine $TAG" \
+              --notes "Patched Flutter ${{ steps.tag.outputs.flutter_version }} engine, patch set ${{ steps.tag.outputs.patch_set }}. See REELX_PATCHES.md and reelx/ENGINE_SETUP.md at this tag."
+          fi
+
+  # macOS and Linux: one job per part, so each stays well under the job limit.
+  build-posix:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-app, os: ubuntu-24.04, platform: linux, part: app, mode: release, cpu: x64 }
+          - { name: linux-engine-folder, os: ubuntu-24.04, platform: linux, part: engine-folder, mode: debug, cpu: x64 }
+          - { name: macos-app-arm64, os: macos-15, platform: macos, part: app, mode: release, cpu: arm64 }
+          - { name: macos-app-x64, os: macos-15, platform: macos, part: app, mode: release, cpu: x64 }
+          - { name: macos-engine-folder-arm64, os: macos-15, platform: macos, part: engine-folder, mode: debug, cpu: arm64 }
+          - { name: macos-engine-folder-x64, os: macos-15, platform: macos, part: engine-folder, mode: debug, cpu: x64 }
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 355
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ROOT: ${{ github.workspace }}/w
+    steps:
+      - name: Free disk space
+        if: matrix.platform == 'linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost /usr/local/.ghcup
+          sudo apt-get update -qq && sudo apt-get install -y -qq libgtk-3-dev > /dev/null
+          df -h /
+
+      - name: Checkout ${{ env.TAG }} and sync
+        run: |
+          mkdir -p "$ROOT"
+          git clone --quiet --depth 1 --branch "$TAG" "https://github.com/$GITHUB_REPOSITORY.git" "$ROOT/flutter"
+          git clone --quiet --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$ROOT/depot_tools"
+          export PATH="$ROOT/depot_tools:$PATH"
+          cd "$ROOT/flutter"
+          cat > .gclient <<'EOF'
+          solutions = [
+            {
+              "custom_deps": {},
+              "deps_file": "DEPS",
+              "managed": False,
+              "name": ".",
+              "safesync_url": "",
+              "url": "https://github.com/flutter/flutter.git",
+              "custom_vars": {
+                "download_android_deps": False,
+                "download_fuchsia_deps": False,
+                "download_jdk": False,
+                "download_esbuild": False,
+              },
+            },
+          ]
+          EOF
+          gclient sync -D --no-history --shallow
+          REELX_FLUTTER_VERSION="${{ needs.prepare.outputs.flutter_version }}" \
+            reelx/tools/write_build_info.sh "${{ needs.prepare.outputs.patch_set }}"
+
+      - name: Build
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          flags=(--runtime-mode "${{ matrix.mode }}" --no-rbe --no-goma)
+          out="host_${{ matrix.mode }}"
+          if [ "${{ matrix.platform }}" = macos ]; then
+            flags+=(--mac-cpu "${{ matrix.cpu }}")
+            [ "${{ matrix.cpu }}" = arm64 ] && out="${out}_arm64"
+          fi
+          if [ "${{ matrix.part }}" = app ]; then
+            if [ "${{ matrix.platform }}" = macos ]; then targets=(flutter/shell/platform/darwin/macos:flutter_framework)
+            else targets=(flutter/shell/platform/linux:flutter_linux_gtk); fi
+          else
+            targets=(flutter/shell/testing:testing flutter/lib/snapshot:kernel_platform_files flutter/flutter_frontend_server:frontend_server)
+          fi
+          python3 engine/src/flutter/tools/gn "${flags[@]}"
+          start=$(date +%s)
+          third_party/ninja/ninja -C "engine/src/out/$out" "${targets[@]}"
+          echo "build took $(( ($(date +%s) - start) / 60 )) min"
+          echo "OUT_NAME=$out" >> "$GITHUB_ENV"
+
+      - name: Package and upload
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          mkdir -p dist
+          if [ "${{ matrix.platform }}-${{ matrix.part }}" = macos-app ]; then
+            # One CPU's framework; the universal one is made below.
+            (cd "engine/src/out/$OUT_NAME" && zip -qry "$ROOT/flutter/dist/FlutterMacOS-${{ matrix.cpu }}.framework.zip" FlutterMacOS.framework)
+          else
+            python3 reelx/tools/package_artifacts.py assets --platform "${{ matrix.platform }}" \
+              --part "${{ matrix.part }}" --out-dir engine/src/out --dest dist \
+              --tester-dir "$OUT_NAME" --cpu "${{ matrix.cpu }}"
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY"
+          fi
+          ls -la dist
+
+      - name: Keep the macOS framework for the universal one
+        if: matrix.platform == 'macos' && matrix.part == 'app'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlutterMacOS-${{ matrix.cpu }}
+          path: ${{ env.ROOT }}/flutter/dist/FlutterMacOS-${{ matrix.cpu }}.framework.zip
+          retention-days: 3
+
+  build-windows:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-app, part: app, mode: release }
+          - { name: windows-engine-folder, part: engine-folder, mode: debug }
+    name: build (${{ matrix.name }})
+    # The engine's toolchain wants Windows SDK 10.0.22621.0, which this
+    # image has and windows-latest (2025) doesn't.
+    runs-on: windows-2022
+    timeout-minutes: 355
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
+    steps:
+      - name: Work folder on the largest drive
+        run: |
+          $drive = Get-PSDrive -PSProvider FileSystem | Sort-Object Free -Descending | Select-Object -First 1
+          $root = "$($drive.Name):\w"
+          New-Item -ItemType Directory -Force $root | Out-Null
+          "ROOT=$root" >> $env:GITHUB_ENV
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          "GYP_MSVS_OVERRIDE_PATH=$vs" >> $env:GITHUB_ENV
+          "vs2022_install=$vs" >> $env:GITHUB_ENV
+
+      - name: Checkout ${{ env.TAG }} and sync
+        run: |
+          git config --global core.longpaths true
+          git clone --quiet --depth 1 --branch "$env:TAG" "https://github.com/$env:GITHUB_REPOSITORY.git" "$env:ROOT\flutter"
+          git clone --quiet --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$env:ROOT\depot_tools"
+          $env:PATH = "$env:ROOT\depot_tools;$env:PATH"
+          "$env:ROOT\depot_tools" >> $env:GITHUB_PATH
+          Set-Location "$env:ROOT\flutter"
+          @'
+          solutions = [
+            {
+              "custom_deps": {},
+              "deps_file": "DEPS",
+              "managed": False,
+              "name": ".",
+              "safesync_url": "",
+              "url": "https://github.com/flutter/flutter.git",
+              "custom_vars": {
+                "download_android_deps": False,
+                "download_fuchsia_deps": False,
+                "download_jdk": False,
+                "download_esbuild": False,
+              },
+            },
+          ]
+          '@ | Set-Content -Encoding ascii .gclient
+          gclient sync -D --no-history --shallow
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build identity
+        shell: bash
+        working-directory: ${{ env.ROOT }}\flutter
+        run: |
+          REELX_FLUTTER_VERSION="${{ needs.prepare.outputs.flutter_version }}" \
+            bash reelx/tools/write_build_info.sh "${{ needs.prepare.outputs.patch_set }}"
+
+      - name: Build
+        working-directory: ${{ env.ROOT }}\flutter
+        run: |
+          python engine\src\flutter\tools\gn --runtime-mode ${{ matrix.mode }} --no-rbe --no-goma
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ('${{ matrix.part }}' -eq 'app') { $targets = @('flutter/shell/platform/windows:flutter_windows') }
+          else { $targets = @('flutter/shell/testing:testing', 'flutter/lib/snapshot:kernel_platform_files', 'flutter/flutter_frontend_server:frontend_server') }
+          $start = Get-Date
+          third_party\ninja\ninja.exe -C engine\src\out\host_${{ matrix.mode }} @targets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "build took $([math]::Round(((Get-Date) - $start).TotalMinutes)) min"
+
+      - name: Package and upload
+        working-directory: ${{ env.ROOT }}\flutter
+        run: |
+          python reelx\tools\package_artifacts.py assets --platform windows --part ${{ matrix.part }} `
+            --out-dir engine\src\out --dest dist --tester-dir host_${{ matrix.mode }} --cpu x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release upload "$env:TAG" (Get-ChildItem dist).FullName --repo "$env:GITHUB_REPOSITORY"
+          exit $LASTEXITCODE
+
+  macos-universal:
+    needs: [prepare, build-posix]
+    runs-on: macos-15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: FlutterMacOS-*
+          path: parts
+          merge-multiple: true
+
+      - name: Universal framework
+        run: |
+          git clone --quiet --depth 1 --branch "$TAG" "https://github.com/$GITHUB_REPOSITORY.git" fork
+          for cpu in arm64 x64; do
+            mkdir -p "out/$cpu" && (cd "out/$cpu" && unzip -q "$GITHUB_WORKSPACE/parts/FlutterMacOS-$cpu.framework.zip")
+          done
+          python3 fork/engine/src/flutter/sky/tools/create_macos_framework.py \
+            --dst "$PWD/out/mac_release_universal" \
+            --arm64-out-dir "$PWD/out/arm64" --x64-out-dir "$PWD/out/x64" --dsym --strip
+          lipo -info out/mac_release_universal/FlutterMacOS.framework/FlutterMacOS
+          python3 fork/reelx/tools/package_artifacts.py assets --platform macos --part app \
+            --out-dir out --dest dist
+          gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY"
+
+  finalize:
+    needs: [prepare, build-posix, build-windows, macos-universal]
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Manifest and checksums
+        run: |
+          git clone --quiet --depth 1 --branch "$TAG" "https://github.com/$GITHUB_REPOSITORY.git" fork
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist --pattern '*.zip'
+          python3 fork/reelx/tools/package_artifacts.py manifest --dest dist \
+            --flutter-version "${{ needs.prepare.outputs.flutter_version }}" \
+            --engine-revision "${{ needs.prepare.outputs.engine_revision }}" \
+            --content-hash "${{ needs.prepare.outputs.content_hash }}" \
+            --fork-commit "$GITHUB_SHA" \
+            --patch-set "${{ needs.prepare.outputs.patch_set }}" \
+            --patches "$(grep -oE '^## P[0-9]+' fork/REELX_PATCHES.md | cut -c4- | tr '\n' ' ')" \
+            --built-by "GitHub Actions run $GITHUB_RUN_ID"
+          gh release upload "$TAG" dist/manifest.json dist/SHA256SUMS --repo "$GITHUB_REPOSITORY"
+          {
+            echo "### Draft release $TAG"
+            echo
+            echo '```'; cat dist/SHA256SUMS; echo '```'
+            echo
+            echo "Publish when checked: \`gh release edit $TAG --repo $GITHUB_REPOSITORY --draft=false\`"
+          } >> "$GITHUB_STEP_SUMMARY"

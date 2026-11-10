@@ -61,7 +61,8 @@ reelx/tools/build_engine.sh            # add --sync to sync first
 ```sh
 python3 engine/src/flutter/tools/gn --no-rbe --no-goma          # → out/host_debug(_arm64)
 third_party/ninja/ninja -C engine/src/out/host_debug \
-  flutter/shell/testing:testing flutter/lib/snapshot:kernel_platform_files
+  flutter/shell/testing:testing flutter/lib/snapshot:kernel_platform_files \
+  flutter/flutter_frontend_server:frontend_server
 ```
 
 Add `--unoptimized` to `gn` for a faster build that runs slower (folder `host_debug_unopt`). On Windows use `python` and `third_party\ninja\ninja.exe`.
@@ -156,6 +157,24 @@ Every export also logs one `REELX_ENGINE {...}` line: `{"stock":true,...}` on th
 
 - Renders: unset `REELX_ENGINE_FOLDER` and remove `~/.reelx/engine`.
 - One export: `ExportConfig(engineExtensions: EngineExtensions.off)`, or `EngineExtensions.parse('without:fdHandoff')` to drop single features. The engine's previous switches come back after the export.
+
+## 6. Releasing an engine
+
+A release is a GitHub release of this repository whose tag names the Flutter version and the patch set: `engine-3.47.9-ext.1`. Pushing the tag starts the "Engine release" workflow:
+
+```sh
+git tag engine-3.47.9-ext.1 <commit on engine-perf/3.47.9 or -wip>
+git push origin engine-3.47.9-ext.1
+```
+
+1. **prepare** checks the tag, reads the stock Flutter's engine revision and content hash (what an app's `flutter --version` reports), refuses a tag whose engine revision differs, and creates a **draft** release.
+2. **build** jobs, one per platform part on GitHub's runners: the Linux library, the macOS framework per CPU, the Windows DLL, and the engine folders (Linux x64, macOS arm64 and x64, Windows x64). Each writes the build identity (`reelx/tools/write_build_info.sh`, so `ReelxEngineInfo` reports the patch set), builds, packages (`reelx/tools/package_artifacts.py`) and uploads to the draft.
+3. **macos-universal** merges the two CPUs' frameworks into the universal one.
+4. **finalize** writes `manifest.json` and `SHA256SUMS` over every asset.
+
+Nothing is public until you publish the draft: `gh release edit engine-3.47.9-ext.1 --repo nploi/flutter --draft=false`. Assets are never replaced; to rebuild, delete the draft and push the tag again. Android and iOS assets are not built yet.
+
+Then pin the release in the editor (`tool/release/engine/ENGINE_VERSION`) in its own PR, and on a machine install the engine folder with `fetch_engine.sh --engine-folder`.
 
 ## Troubleshooting
 
