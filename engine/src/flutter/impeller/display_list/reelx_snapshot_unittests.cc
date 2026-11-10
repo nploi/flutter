@@ -203,6 +203,33 @@ TEST_P(AiksTest, ReelxPooledTargetIsReusedOnceReleased) {
   EXPECT_FALSE(third->WantsLazyMipmaps());
 }
 
+// A reused target draws the new snapshot exactly as a fresh one does.
+TEST_P(AiksTest, ReelxReusedTargetDrawsLikeAFreshOne) {
+  AiksContext renderer(GetContext(), nullptr);
+  auto snapshot = [&](const sk_sp<flutter::DisplayList>& list, bool pooled,
+                      bool* hit) {
+    return DisplayListToTexture(list, {256, 256}, renderer,
+                                /*reset_host_buffer=*/true,
+                                /*generate_mips=*/false,
+                                /*target_pixel_format=*/std::nullopt,
+                                /*lossless_target=*/false, pooled, hit);
+  };
+  bool hit = true;
+  auto first = snapshot(TwoRects(), /*pooled=*/true, &hit);
+  ASSERT_TRUE(first);
+  ReadBack(GetContext(), first);
+  first.reset();
+
+  auto reused = snapshot(Stripes(), /*pooled=*/true, &hit);
+  ASSERT_TRUE(reused);
+  EXPECT_TRUE(hit);
+  auto fresh = snapshot(Stripes(), /*pooled=*/false, nullptr);
+  ASSERT_TRUE(fresh);
+  EXPECT_EQ(MaxDifference(ReadBack(GetContext(), reused),
+                          ReadBack(GetContext(), fresh)),
+            0);
+}
+
 TEST_P(AiksTest, ReelxMipmappedTargetsAreNotPooled) {
   AiksContext renderer(GetContext(), nullptr);
   bool hit = true;

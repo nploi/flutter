@@ -1248,9 +1248,12 @@ std::shared_ptr<Texture> TargetFromPool(
   for (const std::shared_ptr<Texture>& texture : pool) {
     if (texture.use_count() == 1 &&
         SameTarget(texture->GetTextureDescriptor(), desc)) {
-      // Whatever a previous snapshot left on it goes.
+      // Whatever a previous snapshot left on it goes, the framebuffer the
+      // backend cached for it too: that one still points at the previous
+      // render target's MSAA and stencil textures, which are gone.
       texture->SetWantsLazyMipmaps(false);
       texture->SetLazyMipmapped(nullptr);
+      texture->ForgetRenderTargetCaches();
       if (hit) {
         *hit = true;
       }

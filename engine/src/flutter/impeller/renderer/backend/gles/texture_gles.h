@@ -159,6 +159,9 @@ class TextureGLES final : public Texture,
   ///
   /// The color0 texture used by the 2D renderer will use this texture
   /// object to store the associated FBO the first time it is used.
+  // |Texture|
+  void ForgetRenderTargetCaches() override;
+
   void SetCachedFBO(HandleGLES fbo);
 
   /// Retrieve the cached FBO object, or a dead handle if there is no object.
