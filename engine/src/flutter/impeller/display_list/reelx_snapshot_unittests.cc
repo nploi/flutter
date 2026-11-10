@@ -91,6 +91,17 @@ std::vector<uint8_t> DrawnSmall(const std::shared_ptr<Context>& context,
   return ReadBack(context, small);
 }
 
+// The mean of the green channel of RGBA8 [pixels].
+double MeanGreen(const std::vector<uint8_t>& pixels) {
+  double sum = 0;
+  size_t count = 0;
+  for (size_t i = 1; i < pixels.size(); i += 4) {
+    sum += pixels[i];
+    count++;
+  }
+  return count == 0 ? 0 : sum / count;
+}
+
 int MaxDifference(const std::vector<uint8_t>& a,
                   const std::vector<uint8_t>& b) {
   int most = a.size() == b.size() ? 0 : 255;
@@ -272,6 +283,9 @@ TEST_P(AiksTest, ReelxLazyMipmapsDrawLikeEagerOnes) {
   EXPECT_GT(MaxDifference(from_eager, unfiltered), 8);
   EXPECT_GT(MaxDifference(from_lazy, unfiltered), 8)
       << "the lazy draw looks unfiltered: its mipmaps weren't used";
+  // Equal stripes average to mid grey at 1/8: which of the two is off?
+  EXPECT_NEAR(MeanGreen(from_eager), 128, 24) << "the eager mipmaps are off";
+  EXPECT_NEAR(MeanGreen(from_lazy), 128, 24) << "the lazy mipmaps are off";
   EXPECT_LE(MaxDifference(from_eager, from_lazy), 1);
 }
 
