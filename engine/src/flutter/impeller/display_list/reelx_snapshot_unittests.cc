@@ -5,6 +5,7 @@
 // Reelx P1 (lazy mipmaps) and P3 (lossless snapshot targets).
 
 #include <cstring>
+#include <string>
 #include <vector>
 
 #include "flutter/display_list/dl_builder.h"
@@ -260,13 +261,48 @@ TEST_P(AiksTest, ReelxLazyMipmapsDrawLikeEagerOnes) {
                                flutter::DlImageSampling::kMipmapLinear);
   auto from_lazy = DrawnSmall(GetContext(), renderer, lazy,
                               flutter::DlImageSampling::kMipmapLinear);
-  EXPECT_NE(lazy->GetLazyMipmapped(), nullptr);
-  EXPECT_LE(MaxDifference(from_eager, from_lazy), 1);
-
+  auto mipmapped = lazy->GetLazyMipmapped();
+  ASSERT_NE(mipmapped, nullptr);
   // The mipmaps matter here: without them the stripes alias.
   auto unfiltered = DrawnSmall(GetContext(), renderer, eager,
                                flutter::DlImageSampling::kLinear);
   EXPECT_GT(MaxDifference(from_eager, unfiltered), 8);
+
+  // When the lazy draw differs, these say where: the snapshots themselves,
+  // the copy's base level, its mipmaps (the copy drawn directly), or the draw
+  // that made the copy.
+  auto from_copy = DrawnSmall(GetContext(), renderer, mipmapped,
+                              flutter::DlImageSampling::kMipmapLinear);
+  auto row = [](const std::vector<uint8_t> &pixels) {
+    std::string s;
+    for (size_t i = 0; i < 32 * 4 && i < pixels.size(); i += 4) {
+      s += std::to_string(pixels[i]) + " ";
+    }
+    return s;
+  };
+  const TextureDescriptor &copy_desc = mipmapped->GetTextureDescriptor();
+  EXPECT_EQ(copy_desc.mip_count, ISize(256, 256).MipCount());
+  EXPECT_EQ(MaxDifference(ReadBack(GetContext(), eager),
+                          ReadBack(GetContext(), lazy)),
+            0)
+      << "the two snapshots differ";
+  EXPECT_EQ(MaxDifference(ReadBack(GetContext(), mipmapped),
+                          ReadBack(GetContext(), lazy)),
+            0)
+      << "the copy's base level differs from the snapshot";
+  EXPECT_LE(MaxDifference(from_eager, from_copy), 1)
+      << "the copy drawn directly differs: its mipmaps are wrong";
+  EXPECT_LE(MaxDifference(from_eager, from_lazy), 1)
+      << "\n eager      " << row(from_eager) //
+      << "\n lazy       " << row(from_lazy)  //
+      << "\n copy       " << row(from_copy)  //
+      << "\n unfiltered " << row(unfiltered) //
+      << "\n copy storage " << static_cast<int>(copy_desc.storage_mode)
+      << " compression " << static_cast<int>(copy_desc.compression_type)
+      << " usage "
+      << static_cast<int>(
+             static_cast<TextureUsageMask::MaskType>(copy_desc.usage))
+      << " format " << static_cast<int>(copy_desc.format);
 }
 
 }  // namespace testing
