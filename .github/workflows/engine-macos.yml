@@ -113,7 +113,7 @@ jobs:
         run: |
           "$OUT/ui_unittests" --gtest_filter='Reelx*:ImageEncodingReelx*'
           # Impeller on Metal (the runner's virtual GPU), the Vulkan mock.
-          "$OUT/impeller_unittests" --gtest_filter='*Reelx*Metal*:EntityTest.YUV*Metal*:RenderPassVK.*'
+          "$OUT/impeller_unittests" --gtest_filter='*Reelx*Metal*:Reelx*Test.*:EntityTest.YUV*Metal*:RenderPassVK.*'
 
       # Paused: Reelx is a private repository, and checking it out here needs
       # the owner's decision on a token. The engine's own tests above cover

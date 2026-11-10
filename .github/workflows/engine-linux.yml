@@ -120,7 +120,7 @@ jobs:
           # Impeller: OpenGL ES playgrounds (Vulkan can't start on this
           # runner), the Vulkan mock and the GLES texture tests.
           xvfb-run -a "$OUT/impeller_unittests" \
-            --gtest_filter='*Reelx*OpenGLES*:EntityTest.YUV*OpenGLES*:RenderPassVK.*:TextureGLESTest.*'
+            --gtest_filter='*Reelx*OpenGLES*:Reelx*Test.*:EntityTest.YUV*OpenGLES*:RenderPassVK.*:TextureGLESTest.*'
 
       # The engine folder (what `flutter test --local-engine` and
       # `reelx render` take), for Reelx's own CI to test on: it downloads
