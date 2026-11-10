@@ -23,9 +23,22 @@ check_binary() {
   local bin="$1" syms
   assert_file "$bin"
   syms="$(exported "$bin")"
-  assert_contains "$syms" _ReelxEngineInfo
-  assert_contains "$syms" _ReelxSetFeature
+  local sym
+  for sym in "${reelx_symbols[@]}"; do
+    assert_contains "$syms" "_$sym"
+  done
 }
+
+# Every C function Reelx looks up (P0, P4, P7).
+reelx_symbols=(
+  ReelxEngineInfo
+  ReelxSetFeature
+  ReelxImageReadbackToFd
+  ReelxRepeatLastToFd
+  ReelxReleaseFd
+  ReelxRegisterShaderBytes
+  ReelxUnregisterShaderBytes
+)
 
 test_framework_exports_reelx_symbols() {
   check_binary "$out/mac_release_universal/FlutterMacOS.framework/FlutterMacOS"
