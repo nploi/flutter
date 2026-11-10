@@ -89,6 +89,8 @@ jobs:
           start=$(date +%s)
           third_party/ninja/ninja -C engine/src/out/host_debug_unopt \
             flutter/shell/testing:testing \
+            flutter/lib/snapshot:kernel_platform_files \
+            flutter/flutter_frontend_server:frontend_server \
             flutter/shell/platform/linux:flutter_linux_gtk \
             flutter/lib/ui:ui_unittests \
             flutter/impeller:impeller_unittests
@@ -119,6 +121,26 @@ jobs:
           # runner), the Vulkan mock and the GLES texture tests.
           xvfb-run -a "$OUT/impeller_unittests" \
             --gtest_filter='*Reelx*OpenGLES*:EntityTest.YUV*OpenGLES*:RenderPassVK.*:TextureGLESTest.*'
+
+      # The engine folder (what `flutter test --local-engine` and
+      # `reelx render` take), for Reelx's own CI to test on: it downloads
+      # the latest successful run's artifact.
+      - name: Engine folder artifact
+        id: engine_folder
+        if: steps.build.outcome == 'success'
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          python3 reelx/tools/package_artifacts.py assets --platform linux --part engine-folder \
+            --out-dir engine/src/out --dest "$ROOT/dist" --tester-dir host_debug_unopt --cpu x64
+          ls -la "$ROOT/dist"
+
+      - name: Upload the engine folder
+        if: steps.engine_folder.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-folder-linux-x64
+          path: ${{ env.ROOT }}/dist/engine-folder-linux-x64.zip
+          retention-days: 14
 
       # Paused: Reelx is a private repository, and checking it out here needs
       # the owner's decision on a token. The engine's own tests above cover
