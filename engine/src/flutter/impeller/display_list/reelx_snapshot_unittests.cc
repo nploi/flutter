@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Reelx P1 (lazy mipmaps) and P3 (lossless snapshot targets).
+// Reelx P1 (lazy mipmaps), P3 (lossless snapshot targets) and P13 (snapshot
+// host buffers).
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -14,6 +16,7 @@
 #include "fml/synchronization/count_down_latch.h"
 #include "gtest/gtest.h"
 #include "impeller/core/device_buffer.h"
+#include "impeller/core/host_buffer.h"
 #include "impeller/core/sampler_descriptor.h"
 #include "impeller/core/texture_descriptor.h"
 #include "impeller/display_list/aiks_context.h"
@@ -34,6 +37,20 @@ sk_sp<flutter::DisplayList> TwoRects() {
   builder.DrawRect(flutter::DlRect::MakeXYWH(0, 0, 128, 256), paint);
   paint.setColor(flutter::DlColor::kBlue());
   builder.DrawRect(flutter::DlRect::MakeXYWH(128, 0, 128, 256), paint);
+  return builder.Build();
+}
+
+// Enough draws that a few snapshots' uniforms and vertices fill a host
+// buffer block.
+sk_sp<flutter::DisplayList> ManyRects() {
+  flutter::DisplayListBuilder builder;
+  flutter::DlPaint paint;
+  for (int i = 0; i < 400; i++) {
+    paint.setColor(flutter::DlColor::RGBA((i % 7) / 6.0f, (i % 5) / 4.0f,
+                                          (i % 3) / 2.0f, 1.0f));
+    builder.DrawRect(
+        flutter::DlRect::MakeXYWH((i % 20) * 12, (i / 20) * 12, 10, 10), paint);
+  }
   return builder.Build();
 }
 
@@ -315,6 +332,71 @@ TEST_P(AiksTest, ReelxLazyMipmapsDrawLikeGeneratedOnes) {
   auto unfiltered = DrawnSmall(GetContext(), renderer, uploaded,
                                flutter::DlImageSampling::kLinear);
   EXPECT_GT(MaxDifference(expected, unfiltered), 8);
+}
+
+// P13: snapshots that draw with host buffers of their own reset them, so
+// what they emplace doesn't pile up; the frames' buffers aren't touched, and
+// the pixels are those of a snapshot drawn with the frames' buffers.
+TEST_P(AiksTest, ReelxSnapshotsResetHostBuffersOfTheirOwn) {
+  AiksContext renderer(GetContext(), nullptr);
+  ContentContext& content = renderer.GetContentContext();
+  auto snapshot = [&](bool own_buffers, bool* reset) {
+    return DisplayListToTexture(ManyRects(), {256, 256}, renderer,
+                                /*reset_host_buffer=*/false,
+                                /*generate_mips=*/false,
+                                /*target_pixel_format=*/std::nullopt,
+                                /*lossless_target=*/false,
+                                /*pooled_target=*/false, /*pool_hit=*/nullptr,
+                                own_buffers, reset);
+  };
+  auto blocks = [](HostBuffer& buffer) {
+    HostBuffer::TestStateQuery state = buffer.GetStateForTest();
+    return std::max(state.current_buffer + 1, state.total_buffer_count);
+  };
+
+  HostBuffer* frames_buffer = &content.GetTransientsDataBuffer();
+  auto stock = snapshot(/*own_buffers=*/false, nullptr);
+  ASSERT_TRUE(stock);
+  const std::vector<uint8_t> expected = ReadBack(GetContext(), stock);
+  const size_t frames_blocks = blocks(*frames_buffer);
+  const BufferView before = frames_buffer->Emplace(uint8_t{1});
+
+  // Enough snapshots to come round the buffers several times. Reading each
+  // back waits for its work, as an export does.
+  constexpr int kSnapshots = 24;
+  for (int i = 0; i < kSnapshots; i++) {
+    bool reset = false;
+    auto texture = snapshot(/*own_buffers=*/true, &reset);
+    ASSERT_TRUE(texture);
+    EXPECT_TRUE(reset) << "snapshot " << i;
+    EXPECT_EQ(MaxDifference(ReadBack(GetContext(), texture), expected), 0)
+        << "snapshot " << i;
+  }
+
+  // The frames' buffers are back and nothing was emplaced into them.
+  EXPECT_EQ(&content.GetTransientsDataBuffer(), frames_buffer);
+  EXPECT_EQ(frames_buffer->GetStateForTest().current_frame, 0u);
+  EXPECT_EQ(blocks(*frames_buffer), frames_blocks);
+  const BufferView after = frames_buffer->Emplace(uint8_t{1});
+  EXPECT_EQ(after.GetBuffer(), before.GetBuffer());
+  EXPECT_EQ(after.GetRange().offset, before.GetRange().offset + 1);
+
+  // The snapshots' buffers hold no more than one snapshot needs.
+  content.UseSnapshotTransientsBuffers(true);
+  HostBuffer* snapshots_buffer = &content.GetTransientsDataBuffer();
+  EXPECT_NE(snapshots_buffer, frames_buffer);
+  const size_t snapshots_blocks = blocks(*snapshots_buffer);
+  content.UseSnapshotTransientsBuffers(false);
+
+  // Without them the same snapshots pile up in the frames' buffers, which
+  // only a frame resets.
+  for (int i = 0; i < kSnapshots; i++) {
+    bool reset = true;
+    ASSERT_TRUE(snapshot(/*own_buffers=*/false, &reset));
+    EXPECT_FALSE(reset);
+  }
+  EXPECT_GT(blocks(*frames_buffer), frames_blocks);
+  EXPECT_LE(snapshots_blocks, frames_blocks);
 }
 
 }  // namespace testing

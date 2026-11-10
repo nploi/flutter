@@ -322,6 +322,17 @@ class ContentContext {
   /// @brief Resets the transients buffers held onto by the content context.
   void ResetTransientsBuffers();
 
+  /// @brief Reelx P13: makes the transients buffers a second set that only
+  ///        snapshots use (created on the first call), or with false the
+  ///        frames' set again. A snapshot draws between the two calls.
+  ///
+  /// Onscreen frames reset their buffers on the assumption that only a few
+  /// frames are in flight. Nothing bounds snapshots that way, and nothing
+  /// resets the buffers when no frame is drawn, so snapshots keep their own
+  /// and reset them once the work that read them has completed (see
+  /// HostBuffer::ResetIfIdle).
+  void UseSnapshotTransientsBuffers(bool use);
+
   TextShadowCache& GetTextShadowCache() const { return *text_shadow_cache_; }
 
  protected:
@@ -381,6 +392,11 @@ class ContentContext {
   std::shared_ptr<RenderTargetAllocator> render_target_cache_;
   std::shared_ptr<HostBuffer> data_host_buffer_;
   std::shared_ptr<HostBuffer> indexes_host_buffer_;
+  // Reelx P13: the set not in use (the snapshots' while frames draw, the
+  // frames' while a snapshot draws).
+  std::shared_ptr<HostBuffer> other_data_host_buffer_;
+  std::shared_ptr<HostBuffer> other_indexes_host_buffer_;
+  bool using_snapshot_transients_ = false;
   std::shared_ptr<Texture> empty_texture_;
   std::unique_ptr<TextShadowCache> text_shadow_cache_;
 

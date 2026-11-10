@@ -1280,6 +1280,42 @@ std::shared_ptr<Texture> TargetFromPool(
   return texture;
 }
 
+// Reelx P13: after a snapshot drew with the snapshots' host buffers, resets
+// them if that is safe. What the snapshot emplaced is read by command
+// buffers already submitted; an empty one submitted behind them tells when
+// they have completed (a queue completes its buffers in order). A reset
+// hands out the buffers of four resets ago, so it waits while a snapshot
+// that used those is still in flight; the next snapshot then goes on in
+// the current buffers.
+bool ResetSnapshotHostBuffers(ContentContext& renderer) {
+  HostBuffer& data = renderer.GetTransientsDataBuffer();
+  HostBuffer& indexes = renderer.GetTransientsIndexesBuffer();
+  const bool partitioned = &data != &indexes;
+  std::function<void()> data_done = data.MarkInFlight();
+  std::function<void()> indexes_done =
+      partitioned ? indexes.MarkInFlight() : [] {};
+  std::shared_ptr<CommandBuffer> marker =
+      renderer.GetContext()->CreateCommandBuffer();
+  // Without the marker nothing says when the work completes: the buffers
+  // stay marked, and resets stop when they come round to them.
+  if (!marker ||
+      !renderer.GetContext()
+           ->GetCommandQueue()
+           ->Submit({std::move(marker)},
+                    [data_done, indexes_done](CommandBuffer::Status) {
+                      data_done();
+                      indexes_done();
+                    })
+           .ok()) {
+    return false;
+  }
+  bool reset = data.ResetIfIdle();
+  if (partitioned) {
+    reset = indexes.ResetIfIdle() && reset;
+  }
+  return reset;
+}
+
 }  // namespace
 
 std::shared_ptr<Texture> DisplayListToTexture(
@@ -1291,7 +1327,12 @@ std::shared_ptr<Texture> DisplayListToTexture(
     std::optional<PixelFormat> target_pixel_format,
     bool lossless_target,
     bool pooled_target,
-    bool* pool_hit) {
+    bool* pool_hit,
+    bool snapshot_host_buffers,
+    bool* host_buffers_reset) {
+  if (host_buffers_reset) {
+    *host_buffers_reset = false;
+  }
   int mip_count = 1;
   if (generate_mips) {
     mip_count = size.MipCount();
@@ -1368,6 +1409,11 @@ std::shared_ptr<Texture> DisplayListToTexture(
     return nullptr;
   }
 
+  // Reelx P13: from here to the cleanup below the snapshot emplaces into
+  // host buffers of its own.
+  if (snapshot_host_buffers) {
+    context.GetContentContext().UseSnapshotTransientsBuffers(true);
+  }
   DlIRect cull_rect = DlIRect::MakeWH(size.width, size.height);
   impeller::FirstPassDispatcher collector(
       context.GetContentContext(), impeller::Matrix(), Rect::MakeSize(size));
@@ -1384,7 +1430,13 @@ std::shared_ptr<Texture> DisplayListToTexture(
   impeller_dispatcher.SetBackdropData(data, count);
   context.GetContentContext().GetTextShadowCache().MarkFrameStart();
   fml::ScopedCleanupClosure cleanup([&] {
-    if (reset_host_buffer) {
+    if (snapshot_host_buffers) {
+      const bool reset = ResetSnapshotHostBuffers(context.GetContentContext());
+      if (host_buffers_reset) {
+        *host_buffers_reset = reset;
+      }
+      context.GetContentContext().UseSnapshotTransientsBuffers(false);
+    } else if (reset_host_buffer) {
       context.GetContentContext().GetTransientsDataBuffer().Reset();
       context.GetContentContext().GetTransientsIndexesBuffer().Reset();
     }

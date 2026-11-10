@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <functional>
 #include <limits>
 #include <utility>
 
@@ -231,6 +232,54 @@ TEST_P(HostBufferTest, EmplaceWithFailingAllocationDoesntCrash) {
   EXPECT_EQ(view.GetBuffer(), nullptr);
   EXPECT_EQ(view.GetRange().offset, 0u);
   EXPECT_EQ(view.GetRange().length, 0u);
+}
+
+// Reelx P13: a reset is held back while work marked in flight still reads
+// the buffers it would hand out next.
+TEST_P(HostBufferTest, ReelxResetIfIdleWaitsForWorkInFlight) {
+  auto buffer = HostBuffer::Create(GetContext()->GetResourceAllocator(),
+                                   GetContext()->GetIdleWaiter(), 256);
+  std::function<void()> done = buffer->MarkInFlight();
+  for (size_t i = 1; i < kHostBufferArenaSize; i++) {
+    EXPECT_TRUE(buffer->ResetIfIdle());
+    EXPECT_EQ(buffer->GetStateForTest().current_frame, i);
+  }
+
+  // The next reset would come round to what the work reads.
+  EXPECT_FALSE(buffer->ResetIfIdle());
+  EXPECT_EQ(buffer->GetStateForTest().current_frame, kHostBufferArenaSize - 1);
+  // Meanwhile the current buffers go on taking data.
+  EXPECT_TRUE(buffer->Emplace(uint32_t{1}));
+
+  done();
+  EXPECT_TRUE(buffer->ResetIfIdle());
+  EXPECT_EQ(buffer->GetStateForTest().current_frame, 0u);
+}
+
+TEST_P(HostBufferTest, ReelxInFlightIsCountedAndDoneCountsOnce) {
+  auto buffer = HostBuffer::Create(GetContext()->GetResourceAllocator(),
+                                   GetContext()->GetIdleWaiter(), 256);
+  std::function<void()> first = buffer->MarkInFlight();
+  std::function<void()> second = buffer->MarkInFlight();
+  for (size_t i = 1; i < kHostBufferArenaSize; i++) {
+    EXPECT_TRUE(buffer->ResetIfIdle());
+  }
+  // Called twice, as a completion callback may be: counted once.
+  first();
+  first();
+  EXPECT_FALSE(buffer->ResetIfIdle());
+  second();
+  EXPECT_TRUE(buffer->ResetIfIdle());
+}
+
+TEST_P(HostBufferTest, ReelxInFlightDoneMayOutliveTheBuffer) {
+  std::function<void()> done;
+  {
+    auto buffer = HostBuffer::Create(GetContext()->GetResourceAllocator(),
+                                     GetContext()->GetIdleWaiter(), 256);
+    done = buffer->MarkInFlight();
+  }
+  done();
 }
 
 }  // namespace  testing

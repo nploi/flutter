@@ -71,6 +71,7 @@ enum class Feature : int {
   kExactSnapshots,
   kBt709Textures,
   kTesterMetal,
+  kSnapshotBuffers,
   kCount,
 };
 
@@ -80,6 +81,8 @@ enum class Stat : int {
   kTargetPoolMisses,
   kReadbackPoolHits,
   kReadbackPoolMisses,
+  kSnapshotBufferResets,
+  kSnapshotBufferHolds,
   kCount,
 };
 

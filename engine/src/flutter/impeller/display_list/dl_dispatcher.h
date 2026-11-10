@@ -455,7 +455,9 @@ std::shared_ptr<Texture> DisplayListToTexture(
     std::optional<PixelFormat> target_pixel_format = std::nullopt,
     bool lossless_target = false,
     bool pooled_target = false,
-    bool* pool_hit = nullptr);
+    bool* pool_hit = nullptr,
+    bool snapshot_host_buffers = false,
+    bool* host_buffers_reset = nullptr);
 
 /// @brief Render the provided display list to the render target.
 ///

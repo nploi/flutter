@@ -20,12 +20,13 @@ namespace flutter {
 
 namespace {
 
-// Reelx P1 (lazyMips), P2a (targetPool) and P3 (exactSnapshots) live in
-// this file's snapshots.
+// Reelx P1 (lazyMips), P2a (targetPool), P3 (exactSnapshots) and P13
+// (snapshotBuffers) live in this file's snapshots.
 [[maybe_unused]] const bool kReelxSnapshotFeatures = [] {
   reelx::SetAvailable(reelx::Feature::kLazyMips);
   reelx::SetAvailable(reelx::Feature::kTargetPool);
   reelx::SetAvailable(reelx::Feature::kExactSnapshots);
+  reelx::SetAvailable(reelx::Feature::kSnapshotBuffers);
   return true;
 }();
 
@@ -77,17 +78,27 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
   // readback gets exactly the rendered bytes.
   // With targetPool (and one-level targets, so lazyMips) a snapshot reuses
   // the target of an earlier one nothing holds any more.
+  // With snapshotBuffers what a snapshot's draws emplace goes into host
+  // buffers that snapshots reset themselves; otherwise only an onscreen
+  // frame resets them, and snapshots with no frame in between pile up.
   const bool lazy_mips = reelx::IsFeatureOn(reelx::Feature::kLazyMips);
   const bool pooled =
       lazy_mips && reelx::IsFeatureOn(reelx::Feature::kTargetPool);
+  const bool own_buffers = reelx::IsFeatureOn(reelx::Feature::kSnapshotBuffers);
   bool pool_hit = false;
+  bool buffers_reset = false;
   std::shared_ptr<impeller::Texture> texture = impeller::DisplayListToTexture(
       display_list, render_target_size, *context,
       /*reset_host_buffer=*/false,
       /*generate_mips=*/!lazy_mips, impeller_pixel_format,
       /*lossless_target=*/
       reelx::IsFeatureOn(reelx::Feature::kExactSnapshots),
-      /*pooled_target=*/pooled, &pool_hit);
+      /*pooled_target=*/pooled, &pool_hit,
+      /*snapshot_host_buffers=*/own_buffers, &buffers_reset);
+  if (texture && own_buffers) {
+    reelx::CountStat(buffers_reset ? reelx::Stat::kSnapshotBufferResets
+                                   : reelx::Stat::kSnapshotBufferHolds);
+  }
   if (texture && pooled) {
     reelx::CountStat(pool_hit ? reelx::Stat::kTargetPoolHits
                               : reelx::Stat::kTargetPoolMisses);

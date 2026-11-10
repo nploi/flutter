@@ -1020,6 +1020,27 @@ void ContentContext::ResetTransientsBuffers() {
   }
 }
 
+void ContentContext::UseSnapshotTransientsBuffers(bool use) {
+  if (use == using_snapshot_transients_) {
+    return;
+  }
+  if (!other_data_host_buffer_) {
+    // The first snapshot: the same pair as the constructor makes for frames.
+    other_data_host_buffer_ = HostBuffer::Create(
+        context_->GetResourceAllocator(), context_->GetIdleWaiter(),
+        context_->GetCapabilities()->GetMinimumUniformAlignment());
+    other_indexes_host_buffer_ =
+        context_->GetCapabilities()->NeedsPartitionedHostBuffer()
+            ? HostBuffer::Create(
+                  context_->GetResourceAllocator(), context_->GetIdleWaiter(),
+                  context_->GetCapabilities()->GetMinimumUniformAlignment())
+            : other_data_host_buffer_;
+  }
+  std::swap(data_host_buffer_, other_data_host_buffer_);
+  std::swap(indexes_host_buffer_, other_indexes_host_buffer_);
+  using_snapshot_transients_ = use;
+}
+
 void ContentContext::InitializeCommonlyUsedShadersIfNeeded() const {
   GetContext()->InitializeCommonlyUsedShadersIfNeeded();
 }

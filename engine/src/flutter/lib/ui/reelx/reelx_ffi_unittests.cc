@@ -40,7 +40,7 @@ TEST_F(ReelxFfiTest, InfoHasTheContractKeys) {
   }
   for (const char* feature :
        {"lazyMips", "targetPool", "oneCopyReadback", "fdHandoff",
-        "exactSnapshots", "bt709Textures", "testerMetal"}) {
+        "exactSnapshots", "bt709Textures", "testerMetal", "snapshotBuffers"}) {
     EXPECT_NE(info.find(std::string("\"") + feature + "\":"), std::string::npos)
         << feature;
   }

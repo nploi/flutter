@@ -37,14 +37,12 @@ constexpr int kStatCount = static_cast<int>(Stat::kCount);
 // Names as they appear in ReelxEngineInfo and ReelxSetFeature.
 constexpr std::array<const char*, kFeatureCount> kFeatureNames = {
     "lazyMips",       "targetPool",    "oneCopyReadback", "fdHandoff",
-    "exactSnapshots", "bt709Textures", "testerMetal",
+    "exactSnapshots", "bt709Textures", "testerMetal",     "snapshotBuffers",
 };
 
 constexpr std::array<const char*, kStatCount> kStatNames = {
-    "targetPoolHits",
-    "targetPoolMisses",
-    "readbackPoolHits",
-    "readbackPoolMisses",
+    "targetPoolHits",     "targetPoolMisses",     "readbackPoolHits",
+    "readbackPoolMisses", "snapshotBufferResets", "snapshotBufferHolds",
 };
 
 struct State {

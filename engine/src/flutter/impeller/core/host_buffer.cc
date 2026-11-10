@@ -39,6 +39,7 @@ HostBuffer::HostBuffer(const std::shared_ptr<Allocator>& allocator,
     std::shared_ptr<DeviceBuffer> device_buffer = allocator->CreateBuffer(desc);
     FML_CHECK(device_buffer) << "Failed to allocate device buffer.";
     device_buffers_[i].push_back(device_buffer);
+    in_flight_[i] = std::make_shared<std::atomic<size_t>>(0u);
   }
 }
 
@@ -236,6 +237,26 @@ void HostBuffer::Reset() {
   offset_ = 0u;
   current_buffer_ = 0u;
   frame_index_ = (frame_index_ + 1) % kHostBufferArenaSize;
+}
+
+std::function<void()> HostBuffer::MarkInFlight() {
+  std::shared_ptr<std::atomic<size_t>> count = in_flight_[frame_index_];
+  count->fetch_add(1u);
+  auto done = std::make_shared<std::atomic<bool>>(false);
+  return [count, done]() {
+    if (!done->exchange(true)) {
+      count->fetch_sub(1u);
+    }
+  };
+}
+
+bool HostBuffer::ResetIfIdle() {
+  const size_t next = (frame_index_ + 1) % kHostBufferArenaSize;
+  if (in_flight_[next]->load() != 0u) {
+    return false;
+  }
+  Reset();
+  return true;
 }
 
 size_t HostBuffer::GetMinimumUniformAlignment() const {
