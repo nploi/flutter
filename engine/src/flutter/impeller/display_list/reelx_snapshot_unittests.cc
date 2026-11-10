@@ -260,13 +260,19 @@ TEST_P(AiksTest, ReelxLazyMipmapsDrawLikeEagerOnes) {
                                flutter::DlImageSampling::kMipmapLinear);
   auto from_lazy = DrawnSmall(GetContext(), renderer, lazy,
                               flutter::DlImageSampling::kMipmapLinear);
-  EXPECT_NE(lazy->GetLazyMipmapped(), nullptr);
-  EXPECT_LE(MaxDifference(from_eager, from_lazy), 1);
-
+  ASSERT_NE(lazy->GetLazyMipmapped(), nullptr);
+  // The copy's base level is the snapshot itself.
+  EXPECT_EQ(MaxDifference(ReadBack(GetContext(), lazy),
+                          ReadBack(GetContext(), lazy->GetLazyMipmapped())),
+            0)
+      << "the mipmapped copy's base level differs from the snapshot";
   // The mipmaps matter here: without them the stripes alias.
   auto unfiltered = DrawnSmall(GetContext(), renderer, eager,
                                flutter::DlImageSampling::kLinear);
   EXPECT_GT(MaxDifference(from_eager, unfiltered), 8);
+  EXPECT_GT(MaxDifference(from_lazy, unfiltered), 8)
+      << "the lazy draw looks unfiltered: its mipmaps weren't used";
+  EXPECT_LE(MaxDifference(from_eager, from_lazy), 1);
 }
 
 }  // namespace testing
