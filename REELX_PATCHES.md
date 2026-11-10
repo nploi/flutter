@@ -23,7 +23,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 ## P0 — Engine info and feature switches
 
 - **Why**: Reelx must know whether it runs on this engine and which features to use, and must be able to switch any of them off per export without a new release.
-- **Files**: `engine/src/flutter/lib/ui/reelx/reelx_ffi.{h,cc}` (C API + flags + counters), `lib/ui/BUILD.gn` (sources, test), `common/exported{,_test}_symbols{,_mac}.sym` (`Reelx*` exported like `InternalFlutterGpu*`), `.gitignore` (generated `reelx_build_info.h`), `reelx/tools/build_engine.sh` (writes it).
+- **Files**: `engine/src/flutter/lib/ui/reelx/reelx_ffi.{h,cc}` (C API + flags + counters), `lib/ui/BUILD.gn` (sources, test), `common/exported{,_test}_symbols{,_mac}.sym` (`Reelx*` exported like `InternalFlutterGpu*`), `shell/platform/android/android_exports.lst` (`Reelx*`: `libflutter.so` exports only what this version script lists; added 2026-11-10 for the cross-platform builds), `.gitignore` (generated `reelx_build_info.h`), `reelx/tools/build_engine.sh` (writes it).
 - **Tests**: `lib/ui/reelx/reelx_ffi_unittests.cc` (`ReelxFfiTest.*` in `ui_unittests`); `nm -gU` shows `_ReelxEngineInfo` and `_ReelxSetFeature` in `FlutterMacOS.framework` and `flutter_tester`.
 - **Verify**: `ui_unittests --gtest_filter='ReelxFfiTest.*'`; `nm -gU out/host_debug_arm64/flutter_tester | grep Reelx`; the editor's export log shows `REELX_ENGINE {"patchSet":...}`.
 - **Feature**: none (adds `ReelxEngineInfo`, `ReelxSetFeature`; `-2` means the feature isn't in this build)
@@ -61,6 +61,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 
 - **Status**: on `engine-perf/3.47.7-wip`; built and tested on Linux (host_debug_unopt, 2026-11-09): `ReelxFfiTest.*` pass, `flutter_tester` exports the three functions, and a Reelx export through `ReelxImageReadbackToFd` (Skia path) is byte-identical to the stock engine's; the writer logic was also checked off-tree under ThreadSanitizer.
 - **Why**: handing frames to FFmpeg from Dart runs on the UI thread in hundreds of small writes per frame.
+- **Platforms**: POSIX only (macOS, Linux, Android, iOS). On Windows the three C functions are built as stubs (`ReelxImageReadbackToFd`/`ReelxRepeatLastToFd` return `-1`, `ReelxReleaseFd` `0`) and `fdHandoff` is never reported available; Reelx writes to FFmpeg's stdin there. `reelx_handoff_unittests.cc` is left out of Windows builds. Checked on Linux by a `-D_WIN32 -fms-extensions` syntax pass; a real Windows build is still to come.
 - **Files**: `engine/src/flutter/lib/ui/reelx/reelx_handoff.cc` (`ReelxImageReadbackToFd`, `ReelxRepeatLastToFd`, `ReelxReleaseFd`: the readback is `toByteData`'s own, `ConvertImageToRaster` then `EncodeImage`, so the bytes are the same; one writer thread per descriptor writes in call order, keeps the last frame, posts `[token, status, bytes, digest]` with a 64-bit digest of its own), `reelx_ffi.h` (declarations), `lib/ui/BUILD.gn`. Exported by the existing `Reelx*` symbol patterns.
 - **Tests**: `ReelxFfiTest.Handoff*` in `ui_unittests` (refusals before any image); the readback path is Reelx's `frame_handoff_export_test.dart` against the real engine.
 - **Verify**: `ui_unittests --gtest_filter='ReelxFfiTest.*'`; Reelx's gated export suite with `fdHandoff` on and off gives byte-identical files.

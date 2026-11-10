@@ -12,6 +12,10 @@
 #include "flutter/lib/ui/reelx/reelx_handoff.h"
 #include "flutter/lib/ui/reelx/reelx_ffi.h"
 
+// File descriptors and FIFOs are POSIX; on Windows Reelx writes to FFmpeg's
+// stdin itself, so the hand-off is not built there (see the end of the file).
+#if !defined(_WIN32)
+
 #include <errno.h>
 #include <unistd.h>
 
@@ -228,3 +232,29 @@ REELX_EXPORT int32_t ReelxReleaseFd(int32_t fd) {
 }
 
 }  // extern "C"
+
+#else  // defined(_WIN32)
+
+extern "C" {
+
+REELX_EXPORT int32_t ReelxImageReadbackToFd(Dart_Handle image,
+                                            int32_t fd,
+                                            int32_t format,
+                                            int64_t port,
+                                            int64_t token) {
+  return -1;
+}
+
+REELX_EXPORT int32_t ReelxRepeatLastToFd(int32_t fd,
+                                         int64_t port,
+                                         int64_t token) {
+  return -1;
+}
+
+REELX_EXPORT int32_t ReelxReleaseFd(int32_t fd) {
+  return 0;
+}
+
+}  // extern "C"
+
+#endif  // !defined(_WIN32)
