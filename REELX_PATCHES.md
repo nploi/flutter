@@ -82,3 +82,13 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 - **Tests**: `reelx/tools/test/tester_metal_test.sh` (macOS: `--enable-impeller` with and without `--impeller-backend=metal` gets past "Could not create tester context"); the decision itself compiled and checked against `reelx_ffi` off-tree.
 - **Verify**: after a rebase, `REELX_ENGINE_OUT=engine/src/out reelx/tools/test/tester_metal_test.sh`; a CLI render with the engine folder logs the engine and renders.
 - **Feature**: `testerMetal`
+
+## P7 — Fragment shaders from bytes
+
+- **Status**: on `engine-perf/3.47.7-wip`; built and tested on Linux (host_debug_unopt, 2026-11-10).
+- **Why**: a shader effect or transition otherwise has to ship as an asset in the app bundle; with bytes, effects can come from code or downloaded packs.
+- **What**: `ReelxRegisterShaderBytes(key, bytes)` (FFI `Handle` arguments: a `String` and a `Uint8List`, so no `malloc` on the Dart side) keeps a copy of an impellerc bundle (`impellerc --iplr`, the file the flutter tool builds for a `.frag` in pubspec's `shaders`) under `key` for the whole process; `FragmentProgram.fromAsset(key)` finds it before the asset manager. `dart:ui` is unchanged, so the stock API loads it, and a stock engine simply lacks the symbol. Returns `0`, `-1` bad argument, `-3` not a shader bundle (checked with `RuntimeStage::DecodeRuntimeStages`); `ReelxUnregisterShaderBytes(key)` returns `0` or `-4`. `dart:ui` keeps the program it loaded for a key (`_shaderRegistry`) and encodes keys like asset keys (`Uri.encodeFull`), so use plain keys and a new key for changed bytes (a content hash). The bytes must hold a stage for the backend the app runs on (`--runtime-stage-metal` for macOS/iOS Impeller, `--sksl` for Skia, GLES/Vulkan for Linux/Android).
+- **Files**: `lib/ui/reelx/reelx_shader_bytes.{h,cc}` (store + C API), `lib/ui/painting/fragment_program.cc` (`initFromAsset` asks the store first), `lib/ui/BUILD.gn`.
+- **Tests**: `lib/ui/reelx/reelx_shader_bytes_unittests.cc` (`ReelxShaderBytesTest.*` in `ui_unittests`: round trip, decodes like the asset, junk and cut bundles refused, replace, unregister keeps live mappings). End to end (a Flutter test, outside the tree): register an impellerc bundle over FFI, `FragmentProgram.fromAsset`, draw, check pixels; passes with Skia and with `--enable-impeller` (Vulkan/SwiftShader), skipped on the stock engine.
+- **Verify**: `ui_unittests --gtest_filter='ReelxShaderBytes*'`; `nm` shows `ReelxRegisterShaderBytes` / `ReelxUnregisterShaderBytes` in `flutter_tester` and `FlutterMacOS.framework`.
+- **Feature**: none (the symbol's presence is the capability)
