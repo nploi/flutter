@@ -7,11 +7,15 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "flutter/display_list/dl_builder.h"
 #include "flutter/display_list/dl_paint.h"
+#include "flutter/display_list/effects/dl_color_filter.h"
+#include "flutter/display_list/effects/dl_color_source.h"
+#include "flutter/display_list/effects/dl_image_filter.h"
 #include "flutter/impeller/display_list/aiks_unittests.h"
 #include "fml/synchronization/count_down_latch.h"
 #include "gtest/gtest.h"
@@ -121,11 +125,12 @@ std::vector<uint8_t> ReadBack(const std::shared_ptr<Context>& context,
   return std::vector<uint8_t>(bytes, bytes + desc.size);
 }
 
-// [texture]'s base level uploaded to a new texture whose mipmaps are made the
-// way a decoded image's are.
-std::shared_ptr<Texture> UploadedWithMipmaps(
-    const std::shared_ptr<Context>& context,
-    const std::shared_ptr<Texture>& texture) {
+// [texture]'s base level uploaded to a new texture with every mipmap level,
+// the way a decoded image is. [deferred] leaves the levels above 0 unfilled
+// and says so on the texture, as P15's upload does.
+std::shared_ptr<Texture> Uploaded(const std::shared_ptr<Context>& context,
+                                  const std::shared_ptr<Texture>& texture,
+                                  bool deferred) {
   std::vector<uint8_t> bytes = ReadBack(context, texture);
   TextureDescriptor desc;
   desc.storage_mode = StorageMode::kDevicePrivate;
@@ -141,7 +146,8 @@ std::shared_ptr<Texture> UploadedWithMipmaps(
   auto cmd_buffer = context->CreateCommandBuffer();
   auto blit_pass = cmd_buffer->CreateBlitPass();
   if (!blit_pass->AddCopy(DeviceBuffer::AsBufferView(buffer), uploaded) ||
-      !blit_pass->GenerateMipmap(uploaded) || !blit_pass->EncodeCommands()) {
+      (!deferred && !blit_pass->GenerateMipmap(uploaded)) ||
+      !blit_pass->EncodeCommands()) {
     return nullptr;
   }
   auto latch = std::make_shared<fml::CountDownLatch>(1u);
@@ -149,7 +155,34 @@ std::shared_ptr<Texture> UploadedWithMipmaps(
       {cmd_buffer},
       [latch](CommandBuffer::Status status) { latch->CountDown(); });
   latch->Wait();
+  uploaded->SetDeferredMipmaps(deferred);
   return uploaded;
+}
+
+std::shared_ptr<Texture> UploadedWithMipmaps(
+    const std::shared_ptr<Context>& context,
+    const std::shared_ptr<Texture>& texture) {
+  return Uploaded(context, texture, /*deferred=*/false);
+}
+
+// [list] drawn at [size], read back.
+std::vector<uint8_t> Drawn(const std::shared_ptr<Context>& context,
+                           AiksContext& renderer,
+                           const sk_sp<flutter::DisplayList>& list,
+                           ISize size) {
+  return ReadBack(context, DisplayListToTexture(list, size, renderer));
+}
+
+// [image] (256 x 256) drawn into a square of [extent] with [sampling].
+sk_sp<flutter::DisplayList> ImageAt(const std::shared_ptr<Texture>& image,
+                                    Scalar extent,
+                                    flutter::DlImageSampling sampling,
+                                    const flutter::DlPaint* paint = nullptr) {
+  flutter::DisplayListBuilder builder;
+  builder.DrawImageRect(
+      DlImageImpeller::Make(image), flutter::DlRect::MakeWH(256, 256),
+      flutter::DlRect::MakeWH(extent, extent), sampling, paint);
+  return builder.Build();
 }
 
 // [image] drawn at 32 x 32 with [sampling], read back.
@@ -621,6 +654,250 @@ TEST_P(AiksTest, ReelxIdleSnapshotPoolLetsGo) {
   EXPECT_FALSE(hit);
   EXPECT_EQ(MaxDifference(ReadBack(GetContext(), next), pixels), 0);
   EXPECT_EQ(MaxDifference(ReadBack(GetContext(), held), pixels), 0);
+}
+
+// P15: an uploaded image whose mipmaps were left unfilled draws exactly like
+// one that has them when the draw can only read level 0, and nothing fills
+// them.
+TEST_P(AiksTest, ReelxDeferredMipmapsStayUnfilledForLevelZeroDraws) {
+  AiksContext renderer(GetContext(), nullptr);
+  auto source = DisplayListToTexture(Stripes(), {256, 256}, renderer);
+  ASSERT_TRUE(source);
+  auto stock = Uploaded(GetContext(), source, /*deferred=*/false);
+  auto deferred = Uploaded(GetContext(), source, /*deferred=*/true);
+  ASSERT_TRUE(stock && deferred);
+  EXPECT_FALSE(stock->HasDeferredMipmaps());
+  ASSERT_TRUE(deferred->HasDeferredMipmaps());
+  EXPECT_EQ(deferred->GetMipCount(), stock->GetMipCount());
+  const uint64_t generated = GetDeferredMipmapsGenerated();
+
+  struct Case {
+    const char* name;
+    int extent;
+    flutter::DlImageSampling sampling;
+  };
+  const Case cases[] = {
+      {"1:1, mipmap sampling", 256, flutter::DlImageSampling::kMipmapLinear},
+      {"1:1, cubic", 256, flutter::DlImageSampling::kCubic},
+      {"magnified, mipmap sampling", 384,
+       flutter::DlImageSampling::kMipmapLinear},
+      {"minified, linear", 32, flutter::DlImageSampling::kLinear},
+      {"minified, nearest", 32, flutter::DlImageSampling::kNearestNeighbor},
+  };
+  for (const Case& c : cases) {
+    const ISize size(c.extent, c.extent);
+    auto expected = Drawn(GetContext(), renderer,
+                          ImageAt(stock, c.extent, c.sampling), size);
+    auto actual = Drawn(GetContext(), renderer,
+                        ImageAt(deferred, c.extent, c.sampling), size);
+    EXPECT_LE(MaxDifference(expected, actual), 1) << c.name;
+    EXPECT_TRUE(deferred->HasDeferredMipmaps()) << c.name;
+  }
+  // A paint that only fades the image still reads it once.
+  flutter::DlPaint faded;
+  faded.setAlpha(128);
+  EXPECT_LE(MaxDifference(
+                Drawn(GetContext(), renderer,
+                      ImageAt(stock, 256,
+                              flutter::DlImageSampling::kMipmapLinear, &faded),
+                      {256, 256}),
+                Drawn(GetContext(), renderer,
+                      ImageAt(deferred, 256,
+                              flutter::DlImageSampling::kMipmapLinear, &faded),
+                      {256, 256})),
+            1);
+  EXPECT_TRUE(deferred->HasDeferredMipmaps());
+  EXPECT_EQ(GetDeferredMipmapsGenerated(), generated);
+}
+
+// P15: the first draw that can read the mipmaps fills them, once, and draws
+// what a stock upload draws.
+TEST_P(AiksTest, ReelxDeferredMipmapsFillForMinifiedDraws) {
+  AiksContext renderer(GetContext(), nullptr);
+  auto source = DisplayListToTexture(Stripes(), {256, 256}, renderer);
+  ASSERT_TRUE(source);
+  auto stock = Uploaded(GetContext(), source, /*deferred=*/false);
+  auto deferred = Uploaded(GetContext(), source, /*deferred=*/true);
+  ASSERT_TRUE(stock && deferred);
+  const uint64_t generated = GetDeferredMipmapsGenerated();
+
+  auto expected = DrawnSmall(GetContext(), renderer, stock,
+                             flutter::DlImageSampling::kMipmapLinear);
+  auto actual = DrawnSmall(GetContext(), renderer, deferred,
+                           flutter::DlImageSampling::kMipmapLinear);
+  EXPECT_LE(MaxDifference(expected, actual), 1);
+  EXPECT_FALSE(deferred->HasDeferredMipmaps());
+  EXPECT_FALSE(deferred->NeedsMipmapGeneration());
+  EXPECT_EQ(GetDeferredMipmapsGenerated(), generated + 1);
+
+  // The mipmaps matter here: without them the stripes alias.
+  auto unfiltered = DrawnSmall(GetContext(), renderer, stock,
+                               flutter::DlImageSampling::kLinear);
+  EXPECT_GT(MaxDifference(expected, unfiltered), 8);
+
+  // Filled once.
+  actual = DrawnSmall(GetContext(), renderer, deferred,
+                      flutter::DlImageSampling::kMipmapLinear);
+  EXPECT_LE(MaxDifference(expected, actual), 1);
+  EXPECT_EQ(GetDeferredMipmapsGenerated(), generated + 1);
+}
+
+// P15: every draw that isn't a plain, unrotated image rectangle gets the
+// mipmaps a stock upload has, whether or not it ends up reading them.
+TEST_P(AiksTest, ReelxDeferredMipmapsFillForOtherDraws) {
+  AiksContext renderer(GetContext(), nullptr);
+  auto source = DisplayListToTexture(Stripes(), {256, 256}, renderer);
+  ASSERT_TRUE(source);
+  auto stock = Uploaded(GetContext(), source, /*deferred=*/false);
+  ASSERT_TRUE(stock);
+
+  using Draw = std::function<sk_sp<flutter::DisplayList>(
+      const std::shared_ptr<Texture>&)>;
+  struct Case {
+    const char* name;
+    Draw draw;
+  };
+  const flutter::DlImageSampling mipmap =
+      flutter::DlImageSampling::kMipmapLinear;
+  const Case cases[] = {
+      {"blurred",
+       [&](const std::shared_ptr<Texture>& image) {
+         flutter::DlPaint paint;
+         paint.setImageFilter(flutter::DlImageFilter::MakeBlur(
+             12, 12, flutter::DlTileMode::kDecal));
+         return ImageAt(image, 256, mipmap, &paint);
+       }},
+      {"colour filter",
+       [&](const std::shared_ptr<Texture>& image) {
+         flutter::DlPaint paint;
+         paint.setColorFilter(flutter::DlColorFilter::MakeBlend(
+             flutter::DlColor::kRed(), flutter::DlBlendMode::kMultiply));
+         return ImageAt(image, 256, mipmap, &paint);
+       }},
+      {"advanced blend",
+       [&](const std::shared_ptr<Texture>& image) {
+         flutter::DlPaint paint;
+         paint.setBlendMode(flutter::DlBlendMode::kScreen);
+         return ImageAt(image, 256, mipmap, &paint);
+       }},
+      {"rotated",
+       [&](const std::shared_ptr<Texture>& image) {
+         flutter::DisplayListBuilder builder;
+         builder.Translate(128, 128);
+         builder.Rotate(30);
+         builder.Translate(-128, -128);
+         builder.DrawImageRect(DlImageImpeller::Make(image),
+                               flutter::DlRect::MakeWH(256, 256),
+                               flutter::DlRect::MakeWH(256, 256), mipmap);
+         return builder.Build();
+       }},
+      {"scaled down by the canvas",
+       [&](const std::shared_ptr<Texture>& image) {
+         flutter::DisplayListBuilder builder;
+         builder.Scale(0.125, 0.125);
+         builder.DrawImageRect(DlImageImpeller::Make(image),
+                               flutter::DlRect::MakeWH(256, 256),
+                               flutter::DlRect::MakeWH(256, 256), mipmap);
+         return builder.Build();
+       }},
+      {"nine patch",
+       [&](const std::shared_ptr<Texture>& image) {
+         flutter::DisplayListBuilder builder;
+         builder.DrawImageNine(DlImageImpeller::Make(image),
+                               flutter::DlIRect::MakeLTRB(64, 64, 192, 192),
+                               flutter::DlRect::MakeWH(96, 96),
+                               flutter::DlFilterMode::kLinear);
+         return builder.Build();
+       }},
+      {"atlas",
+       [&](const std::shared_ptr<Texture>& image) {
+         flutter::DisplayListBuilder builder;
+         const flutter::DlRSTransform transform =
+             flutter::DlRSTransform::Make({0, 0}, 0.125, Radians(0));
+         const flutter::DlRect source = flutter::DlRect::MakeWH(256, 256);
+         builder.DrawAtlas(DlImageImpeller::Make(image), &transform, &source,
+                           /*colors=*/nullptr, /*count=*/1,
+                           flutter::DlBlendMode::kSrcOver, mipmap,
+                           /*cullRect=*/nullptr);
+         return builder.Build();
+       }},
+      {"image shader",
+       [&](const std::shared_ptr<Texture>& image) {
+         flutter::DlPaint paint;
+         const flutter::DlMatrix matrix =
+             flutter::DlMatrix::MakeScale({0.125, 0.125, 1});
+         paint.setColorSource(flutter::DlColorSource::MakeImage(
+             DlImageImpeller::Make(image), flutter::DlTileMode::kRepeat,
+             flutter::DlTileMode::kRepeat, mipmap, &matrix));
+         flutter::DisplayListBuilder builder;
+         builder.DrawRect(flutter::DlRect::MakeWH(256, 256), paint);
+         return builder.Build();
+       }},
+  };
+  for (const Case& c : cases) {
+    auto deferred = Uploaded(GetContext(), source, /*deferred=*/true);
+    ASSERT_TRUE(deferred) << c.name;
+    ASSERT_TRUE(deferred->HasDeferredMipmaps()) << c.name;
+    auto expected = Drawn(GetContext(), renderer, c.draw(stock), {256, 256});
+    auto actual = Drawn(GetContext(), renderer, c.draw(deferred), {256, 256});
+    EXPECT_LE(MaxDifference(expected, actual), 1) << c.name;
+    EXPECT_FALSE(deferred->HasDeferredMipmaps()) << c.name;
+    EXPECT_FALSE(deferred->NeedsMipmapGeneration()) << c.name;
+  }
+}
+
+// P15, for P1's snapshots: a snapshot made without mipmaps and drawn at its
+// own size with mipmap sampling doesn't get the mipmapped copy either.
+TEST_P(AiksTest, ReelxLazySnapshotDrawnAtItsSizeMakesNoCopy) {
+  AiksContext renderer(GetContext(), nullptr);
+  auto lazy = DisplayListToTexture(Stripes(), {256, 256}, renderer,
+                                   /*reset_host_buffer=*/true,
+                                   /*generate_mips=*/false);
+  ASSERT_TRUE(lazy);
+  const std::vector<uint8_t> pixels = ReadBack(GetContext(), lazy);
+  lazy->SetWantsLazyMipmaps(true);
+
+  auto drawn = Drawn(
+      GetContext(), renderer,
+      ImageAt(lazy, 256, flutter::DlImageSampling::kMipmapLinear), {256, 256});
+  EXPECT_LE(MaxDifference(drawn, pixels), 1);
+  EXPECT_EQ(lazy->GetLazyMipmapped(), nullptr);
+
+  // Minified, it still does.
+  DrawnSmall(GetContext(), renderer, lazy,
+             flutter::DlImageSampling::kMipmapLinear);
+  EXPECT_NE(lazy->GetLazyMipmapped(), nullptr);
+}
+
+TEST(ReelxLazyMipmapsTest, ImageRectNeverMinifies) {
+  const Rect source = Rect::MakeXYWH(10, 20, 200, 100);
+  // The image's own size, larger, and larger through the canvas.
+  EXPECT_TRUE(
+      ImageRectNeverMinifies(Matrix(), source, Rect::MakeXYWH(5, 5, 200, 100)));
+  EXPECT_TRUE(ImageRectNeverMinifies(Matrix(), source, Rect::MakeWH(300, 100)));
+  EXPECT_TRUE(ImageRectNeverMinifies(Matrix::MakeScale({2, 2, 1}), source,
+                                     Rect::MakeWH(100, 50)));
+  EXPECT_TRUE(ImageRectNeverMinifies(
+      Matrix::MakeTranslation({7, 9, 0}) * Matrix::MakeScale({-1, 1, 1}),
+      source, Rect::MakeWH(200, 100)));
+  // Smaller on one axis is smaller.
+  EXPECT_FALSE(ImageRectNeverMinifies(Matrix(), source, Rect::MakeWH(300, 99)));
+  EXPECT_FALSE(ImageRectNeverMinifies(Matrix::MakeScale({0.5, 1, 1}), source,
+                                      Rect::MakeWH(200, 100)));
+  EXPECT_FALSE(ImageRectNeverMinifies(Matrix::MakeScale({0.5, 0.5, 1}), source,
+                                      Rect::MakeWH(390, 190)));
+  // Anything but a scale and a translation counts as smaller.
+  EXPECT_FALSE(ImageRectNeverMinifies(Matrix::MakeRotationZ(Radians(0.5)),
+                                      source, Rect::MakeWH(400, 400)));
+  EXPECT_FALSE(ImageRectNeverMinifies(Matrix::MakeSkew(0.2, 0), source,
+                                      Rect::MakeWH(400, 400)));
+  Matrix perspective;
+  perspective.m[11] = 0.001;
+  EXPECT_FALSE(
+      ImageRectNeverMinifies(perspective, source, Rect::MakeWH(400, 400)));
+  // Nothing to draw.
+  EXPECT_FALSE(ImageRectNeverMinifies(Matrix(), Rect(), Rect::MakeWH(4, 4)));
+  EXPECT_FALSE(ImageRectNeverMinifies(Matrix(), source, Rect()));
 }
 
 }  // namespace testing

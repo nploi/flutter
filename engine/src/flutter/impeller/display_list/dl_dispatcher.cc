@@ -140,6 +140,16 @@ static impeller::SamplerDescriptor ToSamplerDescriptor(
   return desc;
 }
 
+// Reelx P15: whether an image drawn with [paint] is sampled by that draw
+// alone, at the draw's own scale. A filter, a mask blur or an advanced blend
+// takes the image as an input and may sample it again at another scale (the
+// gaussian blur also looks at whether its input has mipmaps).
+static bool SamplesImageOnce(const Paint& paint) {
+  return paint.image_filter == nullptr && paint.color_filter == nullptr &&
+         !paint.invert_colors && !paint.mask_blur_descriptor.has_value() &&
+         paint.blend_mode <= Entity::kLastPipelineBlendMode;
+}
+
 static std::optional<const Rect> ToOptRect(const flutter::DlRect* rect) {
   if (rect == nullptr) {
     return std::nullopt;
@@ -689,6 +699,15 @@ std::shared_ptr<Texture> DlDispatcherBase::GetTexture(
   return image->asImpellerImage()->GetCachedTexture(GetContentContext());
 }
 
+std::shared_ptr<Texture> DlDispatcherBase::GetTextureAsUploaded(
+    const sk_sp<flutter::DlImage>& image) {
+  if (!image) {
+    return nullptr;
+  }
+  return image->asImpellerImage()->GetCachedTextureAsUploaded(
+      GetContentContext());
+}
+
 void DlDispatcherBase::drawVertices(
     const std::shared_ptr<flutter::DlVertices>& vertices,
     flutter::DlBlendMode dl_mode) {}
@@ -704,7 +723,8 @@ void DlDispatcherBase::drawImage(const sk_sp<flutter::DlImage> image,
     return;
   }
 
-  auto texture = GetTexture(image);
+  // Only the size is needed here; drawImageRect decides about the mipmaps.
+  auto texture = GetTextureAsUploaded(image);
   if (!texture) {
     return;
   }
@@ -733,8 +753,28 @@ void DlDispatcherBase::drawImageRect(const sk_sp<flutter::DlImage> image,
   AUTO_DEPTH_WATCHER(1u);
 
   SamplerDescriptor sampler = skia_conversions::ToSamplerDescriptor(sampling);
+  std::shared_ptr<Texture> texture = GetTextureAsUploaded(image);
+  if (texture &&
+      (texture->HasDeferredMipmaps() || texture->WantsLazyMipmaps())) {
+    // Reelx P15: a draw that can only read level 0 (its sampler asks for
+    // nothing else, or no texel gets less than a pixel) is given a sampler
+    // that says so, and the mipmaps this image was made without stay unmade.
+    // The pixels are those of a mipmap sampler, which reads level 0 alone
+    // when it doesn't minify (to within a rounding step: a driver may take
+    // another path for a mipmap sampler at level 0).
+    const bool reads_level_0 =
+        (!render_with_attributes || SamplesImageOnce(paint_)) &&
+        (sampler.mip_filter == MipFilter::kBase ||
+         ImageRectNeverMinifies(GetCanvas().GetCurrentTransform(), src, dst));
+    if (reads_level_0) {
+      sampler.mip_filter = MipFilter::kBase;
+    } else if (!GenerateDeferredMipmaps(GetContentContext().GetContext(),
+                                        texture)) {
+      sampler.mip_filter = MipFilter::kBase;
+    }
+  }
   GetCanvas().DrawImageRect(
-      TextureForSampling(GetContentContext(), GetTexture(image), sampler),
+      TextureForSampling(GetContentContext(), texture, sampler),
       src,                                        // source rect
       dst,                                        // destination rect
       render_with_attributes ? paint_ : Paint(),  // paint

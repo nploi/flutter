@@ -293,6 +293,11 @@ class DlDispatcherBase : public flutter::DlOpReceiver {
 
   std::shared_ptr<Texture> GetTexture(const sk_sp<flutter::DlImage>& image);
 
+  /// Reelx P15: [image]'s texture without filling the mipmaps its upload
+  /// left out.
+  std::shared_ptr<Texture> GetTextureAsUploaded(
+      const sk_sp<flutter::DlImage>& image);
+
  protected:
   Paint paint_;
   Matrix initial_matrix_;

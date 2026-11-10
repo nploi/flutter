@@ -5,6 +5,7 @@
 #ifndef FLUTTER_IMPELLER_CORE_TEXTURE_H_
 #define FLUTTER_IMPELLER_CORE_TEXTURE_H_
 
+#include <atomic>
 #include <memory>
 #include <string_view>
 
@@ -67,6 +68,14 @@ class Texture {
   const std::shared_ptr<Texture>& GetLazyMipmapped() const;
   void SetLazyMipmapped(std::shared_ptr<Texture> mipmapped) const;
 
+  /// Reelx P15: a texture whose levels above 0 are allocated but were left
+  /// unfilled by its upload. A draw that could read them fills them first
+  /// (see impeller/display_list/lazy_mipmaps.h); until then only level 0
+  /// holds pixels, and only level 0 may be sampled. Safe to call from any
+  /// thread (flutter_gpu fills them on the UI thread).
+  void SetDeferredMipmaps(bool deferred);
+  bool HasDeferredMipmaps() const;
+
   /// Reelx P2a: forgets the framebuffer (or FBO) the backend cached when this
   /// texture was last a render target. That cache also holds the other
   /// attachments of that render target, so a texture reused as the color
@@ -90,6 +99,7 @@ class Texture {
   const TextureDescriptor desc_;
   bool is_opaque_ = false;
   bool wants_lazy_mipmaps_ = false;
+  std::atomic<bool> deferred_mipmaps_ = false;
   mutable std::shared_ptr<Texture> lazy_mipmapped_;
 
   bool IsSliceValid(size_t slice) const;

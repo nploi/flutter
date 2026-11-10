@@ -25,6 +25,7 @@
 #if IMPELLER_SUPPORTS_RENDERING
 #include "flutter/display_list/image/dl_image.h"      // nogncheck
 #include "impeller/display_list/dl_image_impeller.h"  // nogncheck
+#include "impeller/display_list/lazy_mipmaps.h"       // nogncheck
 #endif
 #include "third_party/tonic/converter/dart_converter.h"
 #include "third_party/tonic/dart_wrappable.h"
@@ -174,7 +175,12 @@ static std::shared_ptr<impeller::Texture> GetTextureFromImage(
   if (!impeller_image) {
     return nullptr;
   }
-  return impeller_image->GetImpellerTexture(gpu_context->GetContextShared());
+  std::shared_ptr<impeller::Texture> texture =
+      impeller_image->GetImpellerTexture(gpu_context->GetContextShared());
+  // Reelx P15: what happens to this texture next is out of the engine's
+  // sight, so it gets the mipmaps a stock upload gives it.
+  impeller::GenerateDeferredMipmaps(gpu_context->GetContextShared(), texture);
+  return texture;
 }
 #endif
 

@@ -81,6 +81,15 @@ bool Texture::WantsLazyMipmaps() const {
          desc_.size.MipCount() > 1;
 }
 
+void Texture::SetDeferredMipmaps(bool deferred) {
+  deferred_mipmaps_.store(deferred, std::memory_order_release);
+}
+
+bool Texture::HasDeferredMipmaps() const {
+  return deferred_mipmaps_.load(std::memory_order_acquire) &&
+         NeedsMipmapGeneration();
+}
+
 const std::shared_ptr<Texture>& Texture::GetLazyMipmapped() const {
   return lazy_mipmapped_;
 }

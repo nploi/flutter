@@ -9,6 +9,10 @@
 #include <cstring>
 #include <string>
 
+#if IMPELLER_SUPPORTS_RENDERING
+#include "impeller/display_list/lazy_mipmaps.h"
+#endif  // IMPELLER_SUPPORTS_RENDERING
+
 // Written by reelx/tools/build_engine.sh before a build; absent in a plain
 // checkout, where the build reports "dev".
 #if __has_include("flutter/lib/ui/reelx/reelx_build_info.h")
@@ -36,15 +40,16 @@ constexpr int kStatCount = static_cast<int>(Stat::kCount);
 
 // Names as they appear in ReelxEngineInfo and ReelxSetFeature.
 constexpr std::array<const char*, kFeatureCount> kFeatureNames = {
-    "lazyMips",    "targetPool",      "oneCopyReadback",
-    "fdHandoff",   "exactSnapshots",  "bt709Textures",
-    "testerMetal", "snapshotBuffers", "targetAttachments",
+    "lazyMips",          "targetPool",    "oneCopyReadback", "fdHandoff",
+    "exactSnapshots",    "bt709Textures", "testerMetal",     "snapshotBuffers",
+    "targetAttachments", "lazyImageMips",
 };
 
 constexpr std::array<const char*, kStatCount> kStatNames = {
     "targetPoolHits",       "targetPoolMisses",       "readbackPoolHits",
     "readbackPoolMisses",   "snapshotBufferResets",   "snapshotBufferHolds",
-    "targetAttachmentHits", "targetAttachmentMisses",
+    "targetAttachmentHits", "targetAttachmentMisses", "imageMipsDeferred",
+    "imageMipsGenerated",
 };
 
 struct State {
@@ -137,6 +142,11 @@ const char* ReelxEngineInfo(void) {
     json += on ? "\":true" : "\":false";
   }
   json += "},\"stats\":{";
+#if IMPELLER_SUPPORTS_RENDERING
+  // Counted where the mipmaps are filled, in Impeller.
+  state.stats[static_cast<int>(flutter::reelx::Stat::kImageMipsGenerated)]
+      .store(impeller::GetDeferredMipmapsGenerated());
+#endif  // IMPELLER_SUPPORTS_RENDERING
   for (size_t i = 0; i < kStatNames.size(); i++) {
     json += (i ? ",\"" : "\"");
     json += kStatNames[i];

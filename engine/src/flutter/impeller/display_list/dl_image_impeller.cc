@@ -4,6 +4,7 @@
 
 #include "impeller/display_list/dl_image_impeller.h"
 #include "impeller/display_list/aiks_context.h"
+#include "impeller/display_list/lazy_mipmaps.h"
 #include "impeller/entity/contents/content_context.h"
 #include "impeller/entity/contents/filters/filter_contents.h"
 
@@ -52,6 +53,15 @@ sk_sp<DlImageImpeller> DlImageImpeller::MakeFromYUVTextures(
 }
 
 std::shared_ptr<Texture> DlImageImpeller::GetCachedTexture(
+    const ContentContext& renderer) const {
+  auto texture = GetCachedTextureAsUploaded(renderer);
+  if (texture && texture->HasDeferredMipmaps()) {
+    GenerateDeferredMipmaps(renderer.GetContext(), texture);
+  }
+  return texture;
+}
+
+std::shared_ptr<Texture> DlImageImpeller::GetCachedTextureAsUploaded(
     const ContentContext& renderer) const {
   auto texture = renderer.GetCachedTexture(this);
   if (texture) {

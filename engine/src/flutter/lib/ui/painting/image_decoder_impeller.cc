@@ -15,6 +15,7 @@
 #include "flutter/impeller/display_list/dl_image_impeller.h"
 #include "flutter/impeller/renderer/command_buffer.h"
 #include "flutter/impeller/renderer/context.h"
+#include "flutter/lib/ui/reelx/reelx_ffi.h"
 #include "impeller/core/device_buffer.h"
 #include "impeller/core/formats.h"
 #include "impeller/core/texture_descriptor.h"
@@ -34,6 +35,12 @@
 namespace flutter {
 
 namespace {
+// Reelx P15 (lazyImageMips) lives in this file's uploads.
+[[maybe_unused]] const bool kReelxLazyImageMips = [] {
+  reelx::SetAvailable(reelx::Feature::kLazyImageMips);
+  return true;
+}();
+
 /**
  *  Loads the gamut as a set of three points (triangle).
  */
@@ -467,6 +474,15 @@ ImageDecoderImpeller::UnsafeUploadTextureToPrivate(
     // Remove mip count if we are resizing the image on the GPU.
     texture_descriptor.mip_count = 1;
   }
+  // Reelx P15: an uploaded image keeps its mipmap levels but they are not
+  // filled here. The first draw that could read them fills them (see
+  // impeller/display_list/lazy_mipmaps.h); an image only ever drawn at its
+  // own size or larger, like a decoded video frame, never pays for them.
+  const bool defer_mips = reelx::IsFeatureOn(reelx::Feature::kLazyImageMips);
+  if (defer_mips && resize_info.has_value()) {
+    // The resize reads level 0 of this texture and nothing else does.
+    texture_descriptor.mip_count = 1;
+  }
 
   auto dest_texture =
       context->GetResourceAllocator()->CreateTexture(texture_descriptor);
@@ -500,7 +516,11 @@ ImageDecoderImpeller::UnsafeUploadTextureToPrivate(
   blit_pass->AddCopy(impeller::DeviceBuffer::AsBufferView(buffer),
                      dest_texture);
   if (texture_descriptor.mip_count > 1) {
-    blit_pass->GenerateMipmap(dest_texture);
+    if (defer_mips) {
+      dest_texture->SetDeferredMipmaps(true);
+    } else {
+      blit_pass->GenerateMipmap(dest_texture);
+    }
   }
 
   std::shared_ptr<impeller::Texture> result_texture = dest_texture;
@@ -527,7 +547,11 @@ ImageDecoderImpeller::UnsafeUploadTextureToPrivate(
     blit_pass->ResizeTexture(/*source=*/dest_texture,
                              /*destination=*/resize_texture);
     if (resize_desc.mip_count > 1) {
-      blit_pass->GenerateMipmap(resize_texture);
+      if (defer_mips) {
+        resize_texture->SetDeferredMipmaps(true);
+      } else {
+        blit_pass->GenerateMipmap(resize_texture);
+      }
     }
 
     result_texture = std::move(resize_texture);
@@ -559,6 +583,9 @@ ImageDecoderImpeller::UnsafeUploadTextureToPrivate(
 
   context->DisposeThreadLocalCachedResources();
 
+  if (result_texture->HasDeferredMipmaps()) {
+    reelx::CountStat(reelx::Stat::kImageMipsDeferred);
+  }
   return std::make_pair(
       impeller::DlImageImpeller::Make(std::move(result_texture)),
       std::string());
