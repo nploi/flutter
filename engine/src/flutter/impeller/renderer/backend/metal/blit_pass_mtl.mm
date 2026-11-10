@@ -176,6 +176,13 @@ bool BlitPassMTL::OnCopyTextureToBufferCommand(
              destinationOffset:destination_offset
         destinationBytesPerRow:destination_bytes_per_row
       destinationBytesPerImage:destination_bytes_per_image];
+#if !FML_OS_IOS
+  // On a GPU without unified memory a host-visible buffer is managed: the CPU
+  // sees what the GPU wrote only after the buffer is synchronized.
+  if (destination_mtl.storageMode == MTLStorageModeManaged) {
+    [encoder_ synchronizeResource:destination_mtl];
+  }
+#endif  // !FML_OS_IOS
 
 #ifdef IMPELLER_DEBUG
   if (is_metal_trace_active_) {
