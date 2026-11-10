@@ -160,6 +160,9 @@ class TextureSourceVK {
                                               uint32_t mip_level = 0u,
                                               uint32_t slice = 0u) const;
 
+  /// Reelx P2a: drops every cached framebuffer and render pass.
+  void ClearCachedFrameData();
+
  protected:
   const TextureDescriptor desc_;
 

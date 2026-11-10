@@ -169,4 +169,27 @@ TEST_P(TextureGLESTest, CreatingAndBindingEmptyTexturesDoesNotCrash) {
   ASSERT_EQ(texture, nullptr);
 }
 
+// Reelx P2a: the snapshot target pool drops the cached FBO of a texture it
+// hands out again (the FBO still has the old render target's stencil).
+TEST_P(TextureGLESTest, ForgetRenderTargetCachesDropsTheCachedFBO) {
+  ContextGLES& context_gles = ContextGLES::Cast(*GetContext());
+  TextureDescriptor desc;
+  desc.storage_mode = StorageMode::kDevicePrivate;
+  desc.size = {4, 4};
+  desc.format = PixelFormat::kR8G8B8A8UNormInt;
+  desc.usage = TextureUsage::kRenderTarget | TextureUsage::kShaderRead;
+  auto texture = GetContext()->GetResourceAllocator()->CreateTexture(desc);
+  ASSERT_TRUE(texture);
+  TextureGLES& texture_gles = TextureGLES::Cast(*texture);
+
+  texture_gles.SetCachedFBO(context_gles.GetReactor()->CreateUntrackedHandle(
+      HandleType::kFrameBuffer));
+  texture_gles.SetCachedFBOSubresource(0, 0);
+  ASSERT_FALSE(texture_gles.GetCachedFBO().IsDead());
+
+  texture->ForgetRenderTargetCaches();
+  EXPECT_TRUE(texture_gles.GetCachedFBO().IsDead());
+  EXPECT_TRUE(context_gles.GetReactor()->React());
+}
+
 }  // namespace impeller::testing

@@ -67,6 +67,12 @@ class Texture {
   const std::shared_ptr<Texture>& GetLazyMipmapped() const;
   void SetLazyMipmapped(std::shared_ptr<Texture> mipmapped) const;
 
+  /// Reelx P2a: forgets the framebuffer (or FBO) the backend cached when this
+  /// texture was last a render target. That cache also holds the other
+  /// attachments of that render target, so a texture reused as the color
+  /// target of a new render target must drop it first.
+  virtual void ForgetRenderTargetCaches() {}
+
  protected:
   explicit Texture(TextureDescriptor desc);
 

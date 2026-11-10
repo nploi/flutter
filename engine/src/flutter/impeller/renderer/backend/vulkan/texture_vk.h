@@ -63,6 +63,9 @@ class TextureVK final : public Texture, public BackendCast<TextureVK, Texture> {
   /// Retrieve the cached framebuffer and render pass for the given
   /// `(sample_count, mip_level, slice)` subresource. Returns an empty
   /// `FramebufferAndRenderPass` if no entry exists.
+  // |Texture|
+  void ForgetRenderTargetCaches() override;
+
   FramebufferAndRenderPass GetCachedFrameData(SampleCount sample_count,
                                               uint32_t mip_level = 0u,
                                               uint32_t slice = 0u) const;

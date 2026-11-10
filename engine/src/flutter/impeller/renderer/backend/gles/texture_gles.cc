@@ -766,6 +766,13 @@ std::optional<HandleGLES> TextureGLES::GetSyncFence() const {
   return fence_.IsValid() ? std::optional(fence_.Get()) : std::nullopt;
 }
 
+void TextureGLES::ForgetRenderTargetCaches() {
+  // The FBO goes back to the reactor, which deletes it on its own thread.
+  cached_fbo_ = UniqueHandleGLES();
+  cached_fbo_mip_level_ = 0;
+  cached_fbo_slice_ = 0;
+}
+
 void TextureGLES::SetCachedFBO(HandleGLES fbo) {
   cached_fbo_ = UniqueHandleGLES(reactor_, fbo);
 }

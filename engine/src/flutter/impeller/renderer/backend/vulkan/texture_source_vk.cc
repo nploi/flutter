@@ -58,6 +58,10 @@ fml::Status TextureSourceVK::SetLayout(const BarrierVK& barrier) const {
   return {};
 }
 
+void TextureSourceVK::ClearCachedFrameData() {
+  frame_data_.clear();
+}
+
 void TextureSourceVK::SetCachedFrameData(const FramebufferAndRenderPass& data,
                                          SampleCount sample_count,
                                          uint32_t mip_level,

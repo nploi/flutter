@@ -9,6 +9,7 @@
 #include "impeller/renderer/backend/vulkan/render_pass_builder_vk.h"
 #include "impeller/renderer/backend/vulkan/render_pass_vk.h"
 #include "impeller/renderer/backend/vulkan/test/mock_vulkan.h"
+#include "impeller/renderer/backend/vulkan/texture_vk.h"
 #include "impeller/renderer/render_target.h"
 #include "vulkan/vulkan_enums.hpp"
 
@@ -88,6 +89,51 @@ TEST(RenderPassVK, SetViewportPropagatesAllUserSuppliedFields) {
   EXPECT_FLOAT_EQ(vp.height, -80.0f);
   EXPECT_FLOAT_EQ(vp.minDepth, 0.25f);
   EXPECT_FLOAT_EQ(vp.maxDepth, 0.75f);
+}
+
+// Reelx P2a: a resolve texture reused with new MSAA and stencil textures (the
+// snapshot target pool) must not keep the framebuffer cached for the old
+// ones, whose image views are gone.
+TEST(RenderPassVK, ForgottenRenderTargetCachesMakeANewFramebuffer) {
+  std::shared_ptr<ContextVK> context = MockVulkanContextBuilder().Build();
+  RenderTargetAllocator allocator(context->GetResourceAllocator());
+
+  RenderTarget first = allocator.CreateOffscreenMSAA(*context, {4, 4}, 1);
+  std::shared_ptr<Texture> resolve =
+      first.GetColorAttachment(0).resolve_texture;
+  {
+    auto cmd_buffer = context->CreateCommandBuffer();
+    auto render_pass = cmd_buffer->CreateRenderPass(first);
+    ASSERT_TRUE(render_pass);
+  }
+  TextureVK& resolve_vk = TextureVK::Cast(*resolve);
+  auto old_framebuffer =
+      resolve_vk.GetCachedFrameData(SampleCount::kCount4).framebuffer;
+  ASSERT_NE(old_framebuffer, nullptr);
+
+  resolve->ForgetRenderTargetCaches();
+  EXPECT_EQ(resolve_vk.GetCachedFrameData(SampleCount::kCount4).framebuffer,
+            nullptr);
+  EXPECT_EQ(resolve_vk.GetCachedFrameData(SampleCount::kCount4).render_pass,
+            nullptr);
+
+  // A new render target around the same resolve texture gets its own
+  // framebuffer.
+  RenderTarget second = allocator.CreateOffscreenMSAA(
+      *context, {4, 4}, 1, "Second",
+      RenderTarget::kDefaultColorAttachmentConfigMSAA,
+      RenderTarget::kDefaultStencilAttachmentConfig,
+      /*existing_color_msaa_texture=*/nullptr,
+      /*existing_color_resolve_texture=*/resolve);
+  {
+    auto cmd_buffer = context->CreateCommandBuffer();
+    auto render_pass = cmd_buffer->CreateRenderPass(second);
+    ASSERT_TRUE(render_pass);
+  }
+  auto new_framebuffer =
+      resolve_vk.GetCachedFrameData(SampleCount::kCount4).framebuffer;
+  ASSERT_NE(new_framebuffer, nullptr);
+  EXPECT_NE(new_framebuffer, old_framebuffer);
 }
 
 }  // namespace testing
