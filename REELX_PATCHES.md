@@ -4,6 +4,8 @@ Patch set on top of Flutter `3.47.9` (engine revision `89c39edfdfae2949f6806e4a3
 
 Moved from 3.47.7 on 2026-11-10 to match the Flutter version the editor builds with (a swapped engine must match the app's Flutter exactly); the rebase had no conflicts. `engine-perf/3.47.7` and `-wip` stay as they were. Status lines dated before 2026-11-10 were measured on 3.47.7. A patch that is useful beyond Reelx may be offered upstream.
 
+To build the engine and use it on a machine (CLI renders, `flutter test`, app builds), see [reelx/ENGINE_SETUP.md](reelx/ENGINE_SETUP.md).
+
 Every patch is behind a feature flag that `ReelxSetFeature` can turn off at run time and that `ReelxEngineInfo` reports.
 
 ## Upgrading to a new Flutter release
