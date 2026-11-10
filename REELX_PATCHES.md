@@ -1,6 +1,8 @@
 # Reelx engine patches
 
-Patch set on top of Flutter `3.47.7` (engine revision `deb287481e3ce9468f3434937ced4240a70539ca`) for Reelx's macOS export path. One commit per patch on branch `engine-perf/3.47.7`, in the order below; patches written without an engine build wait on `engine-perf/3.47.7-wip` until they are built and tested. A patch that is useful beyond Reelx may be offered upstream.
+Patch set on top of Flutter `3.47.9` (engine revision `89c39edfdfae2949f6806e4a315c0c08522238b7`, content hash `9e025265bef30b838c0c1b68cad19decf97048f2`) for Reelx's export path on every platform the editor ships. One commit per patch on branch `engine-perf/3.47.9`, in the order below; patches not yet built and tested on every platform wait on `engine-perf/3.47.9-wip`.
+
+Moved from 3.47.7 on 2026-11-10 to match the Flutter version the editor builds with (a swapped engine must match the app's Flutter exactly); the rebase had no conflicts. `engine-perf/3.47.7` and `-wip` stay as they were. Status lines dated before 2026-11-10 were measured on 3.47.7. A patch that is useful beyond Reelx may be offered upstream.
 
 Every patch is behind a feature flag that `ReelxSetFeature` can turn off at run time and that `ReelxEngineInfo` reports.
 
@@ -8,8 +10,8 @@ Every patch is behind a feature flag that `ReelxSetFeature` can turn off at run 
 
 ```sh
 git fetch https://github.com/flutter/flutter.git --tags
-git switch -c engine-perf/<new> engine-perf/3.47.7
-git rebase --onto <new> 3.47.7
+git switch -c engine-perf/<new> engine-perf/3.47.9
+git rebase --onto <new> 3.47.9
 ```
 
 Then follow each patch's **Verify** steps, rebuild (`reelx/tools/build_engine.sh`), package (`reelx/tools/package_artifacts.sh`), and re-run the export benchmark before releasing `engine-<new>-ext.<n>`.

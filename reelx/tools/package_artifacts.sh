@@ -10,8 +10,8 @@
 #
 # Usage:
 #   package_artifacts.sh --out-dir <engine/src/out> --dest <dir> \
-#     --flutter-version 3.47.7 --engine-revision <sha> --content-hash <hash> \
-#     --fork-commit <sha> --patch-set reelx.<n> --patches "P0 P1 ..."
+#     --flutter-version 3.47.9 --engine-revision <sha> --content-hash <hash> \
+#     --fork-commit <sha> --patch-set ext.<n> --patches "P0 P1 ..."
 #
 # The out dir must hold mac_release_universal/ and mac_profile_universal/
 # (each with FlutterMacOS.framework, made by build_engine.sh) and host_debug/.
