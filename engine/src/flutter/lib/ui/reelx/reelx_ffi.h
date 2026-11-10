@@ -74,6 +74,7 @@ enum class Feature : int {
   kSnapshotBuffers,
   kTargetAttachments,
   kLazyImageMips,
+  kSingleSampleSnapshots,
   kCount,
 };
 
@@ -89,6 +90,7 @@ enum class Stat : int {
   kTargetAttachmentMisses,
   kImageMipsDeferred,
   kImageMipsGenerated,
+  kSingleSampleSnapshots,
   kCount,
 };
 

@@ -16,6 +16,7 @@
 #include "flutter/display_list/effects/dl_color_filter.h"
 #include "flutter/display_list/effects/dl_color_source.h"
 #include "flutter/display_list/effects/dl_image_filter.h"
+#include "flutter/display_list/effects/dl_mask_filter.h"
 #include "flutter/impeller/display_list/aiks_unittests.h"
 #include "fml/synchronization/count_down_latch.h"
 #include "gtest/gtest.h"
@@ -898,6 +899,164 @@ TEST(ReelxLazyMipmapsTest, ImageRectNeverMinifies) {
   // Nothing to draw.
   EXPECT_FALSE(ImageRectNeverMinifies(Matrix(), Rect(), Rect::MakeWH(4, 4)));
   EXPECT_FALSE(ImageRectNeverMinifies(Matrix(), source, Rect()));
+}
+
+TEST(ReelxSingleSampleTest, PixelAlignedFills) {
+  using flutter::DisplayListBuilder;
+  using flutter::DlPaint;
+  using flutter::DlRect;
+  auto check = [](const std::function<void(DisplayListBuilder&)>& draw) {
+    DisplayListBuilder builder;
+    draw(builder);
+    return DrawsOnlyPixelAlignedFills(*builder.Build());
+  };
+  DlPaint paint;
+  paint.setColor(flutter::DlColor::kRed());
+
+  EXPECT_TRUE(check([](DisplayListBuilder&) {}));
+  EXPECT_TRUE(check([&](DisplayListBuilder& b) {
+    b.DrawRect(DlRect::MakeLTRB(0, 0, 64, 32), paint);
+    b.DrawRect(DlRect::MakeLTRB(-3, 7, 300, 8), paint);
+  }));
+  EXPECT_TRUE(check([&](DisplayListBuilder& b) {
+    b.DrawPaint(paint);
+    b.DrawColor(flutter::DlColor::kBlue(), flutter::DlBlendMode::kSrcOver);
+  }));
+  // A shader over the snapshot, written as is: a pixel-format conversion.
+  EXPECT_TRUE(check([](DisplayListBuilder& b) {
+    DlPaint shaded;
+    shaded.setBlendMode(flutter::DlBlendMode::kSrc);
+    const flutter::DlColor colors[] = {flutter::DlColor::kRed(),
+                                       flutter::DlColor::kBlue()};
+    const float stops[] = {0, 1};
+    shaded.setColorSource(flutter::DlColorSource::MakeLinear(
+        {0, 0}, {64, 0}, 2, colors, stops, flutter::DlTileMode::kClamp));
+    shaded.setColorFilter(flutter::DlColorFilter::MakeBlend(
+        flutter::DlColor::kGreen(), flutter::DlBlendMode::kMultiply));
+    b.DrawRect(DlRect::MakeWH(64, 96), shaded);
+  }));
+
+  // Edges inside pixels.
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    b.DrawRect(DlRect::MakeLTRB(0, 0, 64.5, 32), paint);
+  }));
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    b.DrawRect(DlRect::MakeLTRB(0, 0.25, 64, 32), paint);
+  }));
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    b.DrawOval(DlRect::MakeWH(64, 64), paint);
+  }));
+  EXPECT_FALSE(
+      check([&](DisplayListBuilder& b) { b.DrawCircle({32, 32}, 16, paint); }));
+  EXPECT_FALSE(check(
+      [&](DisplayListBuilder& b) { b.DrawLine({0, 0}, {64, 64}, paint); }));
+  // Anything that moves, clips, strokes, blurs or layers.
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    b.Translate(1, 0);
+    b.DrawRect(DlRect::MakeWH(64, 64), paint);
+  }));
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    b.Scale(2, 2);
+    b.DrawRect(DlRect::MakeWH(64, 64), paint);
+  }));
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    b.ClipRect(DlRect::MakeWH(32, 32));
+    b.DrawRect(DlRect::MakeWH(64, 64), paint);
+  }));
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    DlPaint stroke = paint;
+    stroke.setDrawStyle(flutter::DlDrawStyle::kStroke);
+    b.DrawRect(DlRect::MakeWH(64, 64), stroke);
+  }));
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    DlPaint blurred = paint;
+    blurred.setMaskFilter(
+        flutter::DlBlurMaskFilter::Make(flutter::DlBlurStyle::kNormal, 4));
+    b.DrawRect(DlRect::MakeWH(64, 64), blurred);
+  }));
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    DlPaint filtered = paint;
+    filtered.setImageFilter(
+        flutter::DlImageFilter::MakeBlur(4, 4, flutter::DlTileMode::kDecal));
+    b.DrawRect(DlRect::MakeWH(64, 64), filtered);
+  }));
+  EXPECT_FALSE(check([&](DisplayListBuilder& b) {
+    b.SaveLayer(std::nullopt, nullptr);
+    b.DrawRect(DlRect::MakeWH(64, 64), paint);
+    b.Restore();
+  }));
+}
+
+// P16: a list of fills on pixel boundaries renders to the same bytes with
+// one sample per pixel as with MSAA, and a single-sample snapshot leaves the
+// MSAA snapshots' pooled attachments alone.
+TEST_P(AiksTest, ReelxSingleSampleSnapshotsDrawLikeMultisampled) {
+  AiksContext renderer(GetContext(), nullptr);
+  const SnapshotTargetPool& pool =
+      renderer.GetContentContext().GetSnapshotTargetPool();
+  auto snapshot = [&](const sk_sp<flutter::DisplayList>& list, ISize size,
+                      bool single_sample, bool* attachments_hit) {
+    return DisplayListToTexture(
+        list, size, renderer, /*reset_host_buffer=*/true,
+        /*generate_mips=*/false, /*target_pixel_format=*/std::nullopt,
+        /*lossless_target=*/true, /*pooled_target=*/true, nullptr,
+        /*snapshot_host_buffers=*/false, /*host_buffers_reset=*/nullptr,
+        /*pooled_attachments=*/true, attachments_hit, single_sample);
+  };
+
+  // The stripes, then a conversion of them: an image shader read 1:1 under
+  // a colour filter, written with kSrc, like a pixel-format packing pass.
+  auto stripes = DisplayListToTexture(Stripes(), {256, 256}, renderer);
+  ASSERT_TRUE(stripes);
+  flutter::DisplayListBuilder builder;
+  flutter::DlPaint paint;
+  paint.setBlendMode(flutter::DlBlendMode::kSrc);
+  paint.setColorSource(flutter::DlColorSource::MakeImage(
+      DlImageImpeller::Make(stripes), flutter::DlTileMode::kClamp,
+      flutter::DlTileMode::kClamp, flutter::DlImageSampling::kNearestNeighbor));
+  paint.setColorFilter(flutter::DlColorFilter::MakeBlend(
+      flutter::DlColor::RGBA(0.2, 0.6, 0.9, 0.5),
+      flutter::DlBlendMode::kModulate));
+  builder.DrawRect(flutter::DlRect::MakeWH(256, 192), paint);
+  const sk_sp<flutter::DisplayList> conversion = builder.Build();
+  ASSERT_TRUE(DrawsOnlyPixelAlignedFills(*conversion));
+  ASSERT_TRUE(DrawsOnlyPixelAlignedFills(*Stripes()));
+
+  for (const auto& list : {Stripes(), conversion}) {
+    auto multisampled = snapshot(list, {256, 192}, false, nullptr);
+    auto single = snapshot(list, {256, 192}, true, nullptr);
+    ASSERT_TRUE(multisampled && single);
+    EXPECT_EQ(single->GetTextureDescriptor().sample_count,
+              SampleCount::kCount1);
+    EXPECT_EQ(MaxDifference(ReadBack(GetContext(), multisampled),
+                            ReadBack(GetContext(), single)),
+              0);
+  }
+
+  // The MSAA snapshots' sets stay through single-sample snapshots of another
+  // size (which would otherwise push one out), and the next MSAA snapshot
+  // finds its set.
+  const ISize frame(128, 128);
+  bool hit = true;
+  ASSERT_TRUE(snapshot(ClippedRects(frame), frame, false, &hit));
+  auto ids = [&] {
+    std::vector<uint64_t> result;
+    for (const SnapshotAttachments& set : pool.attachments) {
+      result.push_back(set.id);
+    }
+    return result;
+  };
+  const std::vector<uint64_t> kept = ids();
+  ASSERT_FALSE(kept.empty());
+  for (int i = 0; i < 3; i++) {
+    hit = true;
+    ASSERT_TRUE(snapshot(conversion, {64, 192}, true, &hit));
+    EXPECT_FALSE(hit);
+    EXPECT_EQ(ids(), kept);
+  }
+  hit = false;
+  ASSERT_TRUE(snapshot(ClippedRects(frame), frame, false, &hit));
+  EXPECT_TRUE(hit);
 }
 
 }  // namespace testing

@@ -464,7 +464,16 @@ std::shared_ptr<Texture> DisplayListToTexture(
     bool snapshot_host_buffers = false,
     bool* host_buffers_reset = nullptr,
     bool pooled_attachments = false,
-    bool* attachments_hit = nullptr);
+    bool* attachments_hit = nullptr,
+    bool single_sample = false);
+
+/// Reelx P16: whether every draw in [display_list] is a fill of a rectangle
+/// whose edges are on pixel boundaries (rectangles with integral coordinates,
+/// paint and colour fills), with no transform, clip, layer, stroke, mask or
+/// image filter. Every pixel of such a list is either wholly covered by a
+/// draw or not at all, so multisampling changes none of its pixels and the
+/// list can be rendered with one sample per pixel.
+bool DrawsOnlyPixelAlignedFills(const flutter::DisplayList& display_list);
 
 /// @brief Render the provided display list to the render target.
 ///

@@ -5,6 +5,7 @@
 #include "impeller/display_list/dl_dispatcher.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -1412,6 +1413,65 @@ bool ResetSnapshotHostBuffers(ContentContext& renderer) {
 
 }  // namespace
 
+namespace {
+
+// Reelx P16: the rectangle of a DrawRect record.
+class DrawRectReader : public flutter::IgnoreAttributeDispatchHelper,
+                       public flutter::IgnoreClipDispatchHelper,
+                       public flutter::IgnoreTransformDispatchHelper,
+                       public flutter::IgnoreDrawDispatchHelper {
+ public:
+  void drawRect(const flutter::DlRect& rect) override { rect_ = rect; }
+
+  const std::optional<flutter::DlRect>& rect() const { return rect_; }
+
+ private:
+  std::optional<flutter::DlRect> rect_;
+};
+
+bool IsIntegral(Scalar value) {
+  return std::isfinite(value) && std::floor(value) == value;
+}
+
+}  // namespace
+
+bool DrawsOnlyPixelAlignedFills(const flutter::DisplayList& display_list) {
+  using Op = flutter::DisplayListOpType;
+  for (flutter::DlIndex i = 0; i < display_list.GetRecordCount(); i++) {
+    switch (display_list.GetOpType(i)) {
+      // What a pixel's colour is made of, not which pixels are covered.
+      case Op::kSetAntiAlias:
+      case Op::kSetColor:
+      case Op::kSetBlendMode:
+      case Op::kClearColorFilter:
+      case Op::kSetPodColorFilter:
+      case Op::kClearColorSource:
+      case Op::kSetPodColorSource:
+      case Op::kSetImageColorSource:
+      case Op::kSetRuntimeEffectColorSource:
+      // Every pixel.
+      case Op::kDrawPaint:
+      case Op::kDrawColor:
+        break;
+      case Op::kDrawRect: {
+        DrawRectReader reader;
+        if (!display_list.Dispatch(reader, i) || !reader.rect().has_value()) {
+          return false;
+        }
+        const flutter::DlRect& rect = reader.rect().value();
+        if (!IsIntegral(rect.GetLeft()) || !IsIntegral(rect.GetTop()) ||
+            !IsIntegral(rect.GetRight()) || !IsIntegral(rect.GetBottom())) {
+          return false;
+        }
+        break;
+      }
+      default:
+        return false;
+    }
+  }
+  return true;
+}
+
 std::shared_ptr<Texture> DisplayListToTexture(
     const sk_sp<flutter::DisplayList>& display_list,
     ISize size,
@@ -1425,7 +1485,8 @@ std::shared_ptr<Texture> DisplayListToTexture(
     bool snapshot_host_buffers,
     bool* host_buffers_reset,
     bool pooled_attachments,
-    bool* attachments_hit) {
+    bool* attachments_hit,
+    bool single_sample) {
   if (host_buffers_reset) {
     *host_buffers_reset = false;
   }
@@ -1436,7 +1497,11 @@ std::shared_ptr<Texture> DisplayListToTexture(
   if (generate_mips) {
     mip_count = size.MipCount();
   }
+  // Reelx P16: a single-sample snapshot (see DrawsOnlyPixelAlignedFills)
+  // draws without MSAA, so without its colour and depth/stencil textures and
+  // the resolve, and its target isn't lossy-compressed.
   const bool msaa =
+      !single_sample &&
       context.GetContext()->GetCapabilities()->SupportsOffscreenMSAA() &&
       PixelFormatSupportsMSAA(target_pixel_format);
   // Reelx P3: offscreen MSAA resolve textures are lossy-compressed on GPUs
@@ -1460,14 +1525,16 @@ std::shared_ptr<Texture> DisplayListToTexture(
   SnapshotTargetPool& pool =
       context.GetContentContext().GetSnapshotTargetPool();
   SnapshotAttachments* attachments = nullptr;
-  if (pooled_attachments) {
+  if (pooled_attachments && msaa) {
     attachments = &AttachmentsFromPool(pool, size, format);
     if (attachments_hit) {
       *attachments_hit = attachments->id != 0;
     }
-  } else {
+  } else if (!pooled_attachments) {
     pool.attachments.clear();
   }
+  // A single-sample snapshot leaves the sets of the MSAA snapshots alone.
+  pooled_attachments = attachments != nullptr;
   if (pooled_target || pooled_attachments) {
     pool.frames_since_snapshot = 0;
   }

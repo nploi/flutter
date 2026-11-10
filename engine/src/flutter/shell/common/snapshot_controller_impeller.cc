@@ -29,6 +29,7 @@ namespace {
   reelx::SetAvailable(reelx::Feature::kExactSnapshots);
   reelx::SetAvailable(reelx::Feature::kSnapshotBuffers);
   reelx::SetAvailable(reelx::Feature::kTargetAttachments);
+  reelx::SetAvailable(reelx::Feature::kSingleSampleSnapshots);
   return true;
 }();
 
@@ -86,6 +87,9 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
   // With targetAttachments (and targetPool) it also draws with the MSAA and
   // depth/stencil textures of the snapshot of its size before it, and the
   // backend keeps the framebuffer it made for the reused target.
+  // With singleSampleSnapshots a picture of fills on pixel boundaries only
+  // (a shader drawn over the whole snapshot, as a pixel-format conversion
+  // does) is drawn without MSAA: no pixel would change with it.
   const bool lazy_mips = reelx::IsFeatureOn(reelx::Feature::kLazyMips);
   const bool pooled =
       lazy_mips && reelx::IsFeatureOn(reelx::Feature::kTargetPool);
@@ -95,6 +99,10 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
   bool pool_hit = false;
   bool buffers_reset = false;
   bool attachments_hit = false;
+  const bool single_sample =
+      reelx::IsFeatureOn(reelx::Feature::kSingleSampleSnapshots) &&
+      render_target_size == impeller::ISize(size.width, size.height) &&
+      impeller::DrawsOnlyPixelAlignedFills(*display_list);
   std::shared_ptr<impeller::Texture> texture = impeller::DisplayListToTexture(
       display_list, render_target_size, *context,
       /*reset_host_buffer=*/false,
@@ -103,8 +111,12 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
       reelx::IsFeatureOn(reelx::Feature::kExactSnapshots),
       /*pooled_target=*/pooled, &pool_hit,
       /*snapshot_host_buffers=*/own_buffers, &buffers_reset,
-      /*pooled_attachments=*/pooled_attachments, &attachments_hit);
-  if (texture && pooled_attachments) {
+      /*pooled_attachments=*/pooled_attachments, &attachments_hit,
+      /*single_sample=*/single_sample);
+  if (texture && single_sample) {
+    reelx::CountStat(reelx::Stat::kSingleSampleSnapshots);
+  }
+  if (texture && pooled_attachments && !single_sample) {
     reelx::CountStat(attachments_hit ? reelx::Stat::kTargetAttachmentHits
                                      : reelx::Stat::kTargetAttachmentMisses);
   }
