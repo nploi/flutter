@@ -35,7 +35,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 
 ## P1 — Lazy mipmaps for snapshots
 
-- **Status**: on `engine-perf/3.47.7-wip`; built and tested on Linux (host_debug_unopt, 2026-11-09): `Play/AiksTest.Reelx*` pass on OpenGLES (Vulkan can't start on that machine, Metal needs the Mac). On `engine-perf/3.47.9-wip`: `Play/AiksTest.Reelx*` pass on Metal on GitHub's macOS runner and on an Intel Mac (Radeon Pro 5300M, with P17, 2026-11-10); with `GenerateMipmap` left out of the lazy copy, `ReelxLazyMipmapsDrawLikeGeneratedOnes` fails there (255 apart).
+- **Status**: on `engine-perf/3.47.7-wip`; built and tested on Linux (host_debug_unopt, 2026-11-09): `Play/AiksTest.Reelx*` pass on OpenGLES (Vulkan can't start on that machine, Metal needs the Mac). On `engine-perf/3.47.9-wip`: `Play/AiksTest.Reelx*` pass on Metal on GitHub's macOS runner and on an Intel Mac (Radeon Pro 5300M, with P22, 2026-11-10); with `GenerateMipmap` left out of the lazy copy, `ReelxLazyMipmapsDrawLikeGeneratedOnes` fails there (255 apart).
 - **Why**: every `toImage` snapshot builds a full mip chain an export never reads.
 - **Files**: `shell/common/snapshot_controller_impeller.cc` (`generate_mips` off while `lazyMips` is on, the texture marked `SetWantsLazyMipmaps`), `impeller/core/texture.{h,cc}` (the mark and the kept copy), `impeller/display_list/lazy_mipmaps.{h,cc}` (`TextureForSampling`: a mipmapped copy made once by blit copy + `GenerateMipmap`, only for samplers with `MipFilter::kLinear`), `impeller/display_list/dl_dispatcher.cc` (`drawImageRect`, and `drawImage` through it) and `paint.cc` (image shaders) call it.
 - **Tests**: `impeller/display_list/reelx_snapshot_unittests.cc` (`AiksTest.ReelxSnapshotWithoutMipsHasOneLevel`, `ReelxLazyMipmapsOnlyForMipmapSampling`, `ReelxLazyMipmapsNotForOneLevelSizes`).
@@ -142,7 +142,7 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 - **Verify**: `impeller_unittests --gtest_filter='*Reelx*'`; a `flutter test --enable-impeller` loop that packs each frame with a full-target fragment shader and reads it back gives the same bytes with the feature on and off, and `ReelxEngineInfo` counts `singleSampleSnapshots`. After a rebase, check the `DisplayListOpType` names the classifier lists (a renamed or split attribute op makes it refuse, which is safe; a new draw op is refused by the default case) and that `DisplayListToTexture` still picks MSAA only through the `msaa` flag patched here.
 - **Feature**: `singleSampleSnapshots`
 
-## P17 — CPU readback on Macs without unified memory
+## P22 — CPU readback on Macs without unified memory
 
 - **Status**: on `engine-perf/3.47.9-wip`; built and tested on an Intel Mac (MacBook Pro 16" 2019, Radeon Pro 5300M, 2026-11-10). Upstream issue flutter/flutter#195402 (open); a candidate to offer upstream.
 - **Why**: on a GPU without unified memory (Intel Macs' AMD GPUs) a host-visible buffer is managed, and Impeller never synchronizes it after a texture-to-buffer copy, so every readback (`toByteData`, Reelx's frame capture) comes back as zeros. Flutter's macOS embedder avoids it by picking the integrated GPU when there is one; `flutter_tester` and Impeller's own tests use the system default device, which is the AMD GPU.
@@ -150,3 +150,4 @@ Each patch has: **Id**, **Title**, **Why** (what an export pays for without it),
 - **Tests**: the pixel checks in `impeller/display_list/reelx_snapshot_unittests.cc` on Metal: without the fix every snapshot reads back as zeros there, and `ReelxLazyMipmapsDrawLikeGeneratedOnes/Metal` fails.
 - **Verify**: on an Intel Mac with an AMD GPU, `impeller_unittests --gtest_filter='*Reelx*'` passes on Metal.
 - **Feature**: none (a fix; nothing to switch off)
+- **Note**: committed as "P17" (7073cbfb86); the plan had already given P13–P21 to other candidates.
