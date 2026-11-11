@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for reelx/tools/package_artifacts.sh against a fake engine out tree.
+# Tests for engine_perf/tools/package_artifacts.sh against a fake engine out tree.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/../package_artifacts.sh"
@@ -32,7 +32,7 @@ package() {
     --engine-revision deb287481e3ce9468f3434937ced4240a70539ca \
     --content-hash d8a2d6c768c334d53e16277f837970ffa1e2de81 \
     --fork-commit 0123456789abcdef \
-    --patch-set reelx.0 --patches "P0"
+    --patch-set engine_perf.0 --patches "P0"
 }
 
 setup_tree() {
@@ -56,7 +56,7 @@ test_manifest_identity_fields() {
   assert_eq "$(jq -r .engineRevision "$m")" deb287481e3ce9468f3434937ced4240a70539ca
   assert_eq "$(jq -r .engineContentHash "$m")" d8a2d6c768c334d53e16277f837970ffa1e2de81
   assert_eq "$(jq -r .forkCommit "$m")" 0123456789abcdef
-  assert_eq "$(jq -r .patchSet "$m")" reelx.0
+  assert_eq "$(jq -r .patchSet "$m")" engine_perf.0
   assert_eq "$(jq -c .patches "$m")" '["P0"]'
   assert_eq "$(jq '.artifacts | length' "$m")" 3
 }

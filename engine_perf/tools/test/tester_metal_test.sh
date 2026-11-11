@@ -3,7 +3,7 @@
 # --impeller-backend opens a Metal context. The stock tester stops with
 # "Could not create tester context" (no Vulkan in a mac host build).
 #
-# Needs a build: REELX_ENGINE_OUT=<engine/src/out> (build_engine.sh sets it).
+# Needs a build: ENGINE_PERF_ENGINE_OUT=<engine/src/out> (build_engine.sh sets it).
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 source "$here/lib.sh"
@@ -12,7 +12,7 @@ if [[ "$(uname -s)" != Darwin ]]; then
   echo "skipped: Metal exists only on a Mac"
   exit 0
 fi
-out="${REELX_ENGINE_OUT:?set REELX_ENGINE_OUT to engine/src/out}"
+out="${ENGINE_PERF_ENGINE_OUT:?set ENGINE_PERF_ENGINE_OUT to engine/src/out}"
 cpu="$([[ "$(uname -m)" == arm64 ]] && echo _arm64 || true)"
 host="$out/host_debug$cpu"
 

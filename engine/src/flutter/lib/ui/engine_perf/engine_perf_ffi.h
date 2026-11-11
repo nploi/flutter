@@ -2,22 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef FLUTTER_LIB_UI_REELX_REELX_FFI_H_
-#define FLUTTER_LIB_UI_REELX_REELX_FFI_H_
+#ifndef FLUTTER_LIB_UI_ENGINE_PERF_ENGINE_PERF_FFI_H_
+#define FLUTTER_LIB_UI_ENGINE_PERF_ENGINE_PERF_FFI_H_
 
 #include <cstdint>
 
-// Reelx engine extensions.
+// Engine performance extensions (the engine-perf patch set).
 //
 // The C functions below are looked up from Dart with dart:ffi
 // (DynamicLibrary.process()), so they must stay exported from the macOS
 // framework and from flutter_tester (see common/exported_test_symbols*.sym).
-// A stock engine doesn't have them; Reelx then keeps its default paths.
+// A stock engine doesn't have them; callers then keep their default paths.
 
 #if defined(_WIN32)
-#define REELX_EXPORT __declspec(dllexport)
+#define ENGINE_PERF_EXPORT __declspec(dllexport)
 #else
-#define REELX_EXPORT __attribute__((visibility("default"), used))
+#define ENGINE_PERF_EXPORT __attribute__((visibility("default"), used))
 #endif
 
 extern "C" {
@@ -25,20 +25,20 @@ extern "C" {
 /// JSON describing this engine build, the current feature switches and pool
 /// counters. The string is owned by the engine and stays valid until the next
 /// call on the same thread.
-REELX_EXPORT const char* ReelxEngineInfo(void);
+ENGINE_PERF_EXPORT const char* EnginePerfInfo(void);
 
 /// Turns the feature [name] on (on != 0) or off for the whole process.
 /// Returns 0 on success, -1 for an unknown name, -2 for a feature this build
 /// doesn't contain (it stays off).
-REELX_EXPORT int32_t ReelxSetFeature(const char* name, int32_t on);
+ENGINE_PERF_EXPORT int32_t EnginePerfSetFeature(const char* name, int32_t on);
 
 }  // extern "C"
 
 namespace flutter {
-namespace reelx {
+namespace engine_perf {
 
-/// Engine behaviours a Reelx patch adds. Each is on by default when the build
-/// contains it and can be switched off with ReelxSetFeature.
+/// Engine behaviours an engine-perf patch adds. Each is on by default when the
+/// build contains it and can be switched off with EnginePerfSetFeature.
 enum class Feature : int {
   kLazyMips = 0,
   kTargetPool,
@@ -50,7 +50,7 @@ enum class Feature : int {
   kCount,
 };
 
-/// Counters reported in ReelxEngineInfo's "stats".
+/// Counters reported in EnginePerfInfo's "stats".
 enum class Stat : int {
   kTargetPoolHits = 0,
   kTargetPoolMisses,
@@ -73,7 +73,7 @@ void SetAvailable(Feature feature);
 void SetAvailableForTesting(Feature feature, bool available);
 void ResetFeaturesForTesting();
 
-}  // namespace reelx
+}  // namespace engine_perf
 }  // namespace flutter
 
-#endif  // FLUTTER_LIB_UI_REELX_REELX_FFI_H_
+#endif  // FLUTTER_LIB_UI_ENGINE_PERF_ENGINE_PERF_FFI_H_

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Packages a Reelx engine build into release assets:
+# Packages a patched engine build into release assets:
 #   FlutterMacOS-release.framework.zip  universal release framework
 #   FlutterMacOS-profile.framework.zip  universal profile framework (benchmarks)
 #   engine-folder.zip                   local-engine layout for `flutter test`
@@ -11,7 +11,7 @@
 # Usage:
 #   package_artifacts.sh --out-dir <engine/src/out> --dest <dir> \
 #     --flutter-version 3.47.7 --engine-revision <sha> --content-hash <hash> \
-#     --fork-commit <sha> --patch-set reelx.<n> --patches "P0 P1 ..."
+#     --fork-commit <sha> --patch-set engine_perf.<n> --patches "P0 P1 ..."
 #
 # The out dir must hold mac_release_universal/ and mac_profile_universal/
 # (each with FlutterMacOS.framework, made by build_engine.sh) and host_debug/.
@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --out-dir) out_dir="$2"; shift 2 ;;
     # The tester build to ship (host_debug_arm64 on Apple silicon); it is
-    # always staged as out/host_debug so the CLI's flags never change.
+    # always staged as out/host_debug so --local-engine flags never change.
     --host-dir) host_dir="$2"; shift 2 ;;
     --dest) dest="$2"; shift 2 ;;
     --flutter-version) flutter_version="$2"; shift 2 ;;

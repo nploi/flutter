@@ -2,39 +2,39 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 
 #include <array>
 #include <atomic>
 #include <cstring>
 #include <string>
 
-// Written by reelx/tools/build_engine.sh before a build; absent in a plain
-// checkout, where the build reports "dev".
-#if __has_include("flutter/lib/ui/reelx/reelx_build_info.h")
-#include "flutter/lib/ui/reelx/reelx_build_info.h"
+// Written by engine_perf/tools/build_engine.sh before a build; absent in a
+// plain checkout, where the build reports "dev".
+#if __has_include("flutter/lib/ui/engine_perf/engine_perf_build_info.h")
+#include "flutter/lib/ui/engine_perf/engine_perf_build_info.h"
 #endif
-#ifndef REELX_FLUTTER_VERSION
-#define REELX_FLUTTER_VERSION "dev"
+#ifndef ENGINE_PERF_FLUTTER_VERSION
+#define ENGINE_PERF_FLUTTER_VERSION "dev"
 #endif
-#ifndef REELX_ENGINE_REVISION
-#define REELX_ENGINE_REVISION "dev"
+#ifndef ENGINE_PERF_ENGINE_REVISION
+#define ENGINE_PERF_ENGINE_REVISION "dev"
 #endif
-#ifndef REELX_PATCH_SET
-#define REELX_PATCH_SET "dev"
+#ifndef ENGINE_PERF_PATCH_SET
+#define ENGINE_PERF_PATCH_SET "dev"
 #endif
-#ifndef REELX_FORK_COMMIT
-#define REELX_FORK_COMMIT "dev"
+#ifndef ENGINE_PERF_FORK_COMMIT
+#define ENGINE_PERF_FORK_COMMIT "dev"
 #endif
 
 namespace flutter {
-namespace reelx {
+namespace engine_perf {
 namespace {
 
 constexpr int kFeatureCount = static_cast<int>(Feature::kCount);
 constexpr int kStatCount = static_cast<int>(Stat::kCount);
 
-// Names as they appear in ReelxEngineInfo and ReelxSetFeature.
+// Names as they appear in EnginePerfInfo and EnginePerfSetFeature.
 constexpr std::array<const char*, kFeatureCount> kFeatureNames = {
     "lazyMips",       "targetPool",    "oneCopyReadback", "fdHandoff",
     "exactSnapshots", "bt709Textures", "testerMetal",
@@ -83,8 +83,8 @@ bool IsFeatureOn(Feature feature) {
 }
 
 void CountStat(Stat stat) {
-  GetState().stats[static_cast<int>(stat)].fetch_add(
-      1, std::memory_order_relaxed);
+  GetState().stats[static_cast<int>(stat)].fetch_add(1,
+                                                     std::memory_order_relaxed);
 }
 
 void SetAvailable(Feature feature) {
@@ -114,22 +114,22 @@ void ResetFeaturesForTesting() {
   }
 }
 
-}  // namespace reelx
+}  // namespace engine_perf
 }  // namespace flutter
 
 extern "C" {
 
-const char* ReelxEngineInfo(void) {
-  using flutter::reelx::GetState;
-  using flutter::reelx::kFeatureNames;
-  using flutter::reelx::kStatNames;
-  auto& state = flutter::reelx::GetState();
+const char* EnginePerfInfo(void) {
+  using flutter::engine_perf::GetState;
+  using flutter::engine_perf::kFeatureNames;
+  using flutter::engine_perf::kStatNames;
+  auto& state = flutter::engine_perf::GetState();
 
   thread_local std::string json;
-  json = "{\"flutter\":\"" REELX_FLUTTER_VERSION
-         "\",\"engineRevision\":\"" REELX_ENGINE_REVISION
-         "\",\"patchSet\":\"" REELX_PATCH_SET
-         "\",\"forkCommit\":\"" REELX_FORK_COMMIT "\",\"features\":{";
+  json = "{\"flutter\":\"" ENGINE_PERF_FLUTTER_VERSION
+         "\",\"engineRevision\":\"" ENGINE_PERF_ENGINE_REVISION
+         "\",\"patchSet\":\"" ENGINE_PERF_PATCH_SET
+         "\",\"forkCommit\":\"" ENGINE_PERF_FORK_COMMIT "\",\"features\":{";
   for (size_t i = 0; i < kFeatureNames.size(); i++) {
     bool on = state.available[i].load() && state.on[i].load();
     json += (i ? ",\"" : "\"");
@@ -146,12 +146,12 @@ const char* ReelxEngineInfo(void) {
   return json.c_str();
 }
 
-int32_t ReelxSetFeature(const char* name, int32_t on) {
-  int i = flutter::reelx::FeatureIndex(name);
+int32_t EnginePerfSetFeature(const char* name, int32_t on) {
+  int i = flutter::engine_perf::FeatureIndex(name);
   if (i < 0) {
     return -1;
   }
-  auto& state = flutter::reelx::GetState();
+  auto& state = flutter::engine_perf::GetState();
   if (!state.available[i].load()) {
     return -2;
   }

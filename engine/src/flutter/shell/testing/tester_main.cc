@@ -18,7 +18,7 @@
 #include "flutter/fml/paths.h"
 #include "flutter/fml/synchronization/waitable_event.h"
 #include "flutter/fml/task_runner.h"
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 #include "flutter/shell/common/platform_view.h"
 #include "flutter/shell/common/rasterizer.h"
 #include "flutter/shell/common/shell.h"
@@ -50,7 +50,8 @@ static absl::NoDestructor<std::unique_ptr<Shell>> g_shell;
 
 namespace {
 #if TESTER_ENABLE_METAL
-// Reelx (feature testerMetal): `flutter test --enable-impeller` never passes
+// EnginePerf (feature testerMetal): `flutter test --enable-impeller` never
+// passes
 // --impeller-backend, and a mac host build has no Vulkan, so without this the
 // tester has no context at all. With no backend asked for, use Metal.
 bool UsesMetal(const Settings& settings) {
@@ -58,7 +59,7 @@ bool UsesMetal(const Settings& settings) {
     return true;
   }
   return !settings.requested_rendering_backend.has_value() &&
-         reelx::IsFeatureOn(reelx::Feature::kTesterMetal);
+         engine_perf::IsFeatureOn(engine_perf::Feature::kTesterMetal);
 }
 #endif
 
@@ -644,7 +645,8 @@ int main(int argc, char* argv[]) {
 #endif  // defined(FML_OS_WIN)
 
 #if TESTER_ENABLE_METAL
-  flutter::reelx::SetAvailable(flutter::reelx::Feature::kTesterMetal);
+  flutter::engine_perf::SetAvailable(
+      flutter::engine_perf::Feature::kTesterMetal);
 #endif
 
   return flutter::RunTester(settings,

@@ -1,4 +1,4 @@
-# Minimal test helpers for the reelx/tools scripts (plain bash, no framework).
+# Minimal test helpers for the engine_perf/tools scripts (plain bash, no framework).
 # Usage: source this file, define functions named test_*, then call run_tests.
 
 TESTS_RUN=0
