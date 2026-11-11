@@ -177,7 +177,7 @@ static std::shared_ptr<impeller::Texture> GetTextureFromImage(
   }
   std::shared_ptr<impeller::Texture> texture =
       impeller_image->GetImpellerTexture(gpu_context->GetContextShared());
-  // Reelx P15: what happens to this texture next is out of the engine's
+  // EnginePerf P15: what happens to this texture next is out of the engine's
   // sight, so it gets the mipmaps a stock upload gives it.
   impeller::GenerateDeferredMipmaps(gpu_context->GetContextShared(), texture);
   return texture;

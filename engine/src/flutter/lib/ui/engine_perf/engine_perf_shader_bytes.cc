@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/lib/ui/reelx/reelx_shader_bytes.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_shader_bytes.h"
 
 #include <map>
 #include <mutex>
@@ -12,7 +12,7 @@
 #include "third_party/tonic/converter/dart_converter.h"
 
 namespace flutter {
-namespace reelx {
+namespace engine_perf {
 
 namespace {
 
@@ -96,37 +96,37 @@ void ClearShaderBytesForTesting() {
   Store().clear();
 }
 
-}  // namespace reelx
+}  // namespace engine_perf
 }  // namespace flutter
 
 extern "C" {
 
-int32_t ReelxRegisterShaderBytes(Dart_Handle key, Dart_Handle bytes) {
+int32_t EnginePerfRegisterShaderBytes(Dart_Handle key, Dart_Handle bytes) {
   std::string name;
-  if (!flutter::reelx::ReadKey(key, &name) || !Dart_IsTypedData(bytes) ||
+  if (!flutter::engine_perf::ReadKey(key, &name) || !Dart_IsTypedData(bytes) ||
       Dart_GetTypeOfTypedData(bytes) != Dart_TypedData_kUint8) {
-    return flutter::reelx::kShaderBytesBadArgument;
+    return flutter::engine_perf::kShaderBytesBadArgument;
   }
   Dart_TypedData_Type type;
   void* data = nullptr;
   intptr_t length = 0;
   if (Dart_IsError(Dart_TypedDataAcquireData(bytes, &type, &data, &length))) {
-    return flutter::reelx::kShaderBytesBadArgument;
+    return flutter::engine_perf::kShaderBytesBadArgument;
   }
   // RegisterShaderBytes copies the bytes and makes no Dart API call, so it
   // runs while the list is held.
-  int32_t result = flutter::reelx::RegisterShaderBytes(
+  int32_t result = flutter::engine_perf::RegisterShaderBytes(
       name, static_cast<const uint8_t*>(data), static_cast<size_t>(length));
   Dart_TypedDataReleaseData(bytes);
   return result;
 }
 
-int32_t ReelxUnregisterShaderBytes(Dart_Handle key) {
+int32_t EnginePerfUnregisterShaderBytes(Dart_Handle key) {
   std::string name;
-  if (!flutter::reelx::ReadKey(key, &name)) {
-    return flutter::reelx::kShaderBytesBadArgument;
+  if (!flutter::engine_perf::ReadKey(key, &name)) {
+    return flutter::engine_perf::kShaderBytesBadArgument;
   }
-  return flutter::reelx::UnregisterShaderBytes(name);
+  return flutter::engine_perf::UnregisterShaderBytes(name);
 }
 
 }  // extern "C"

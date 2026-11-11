@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Builds the Reelx engine on a Mac: universal release and profile
-# FlutterMacOS.framework, and flutter_tester for local-engine CLI renders.
+# Builds the patched engine on a Mac: universal release and profile
+# FlutterMacOS.framework, and flutter_tester for local-engine tests.
 #
 # Usage (from anywhere inside this checkout, depot_tools on PATH):
-#   reelx/tools/build_engine.sh [--sync] [--skip-tests] [--jobs N]
+#   engine_perf/tools/build_engine.sh [--sync] [--skip-tests] [--jobs N]
 #
 # Outputs under engine/src/out/:
 #   host_{release,profile,debug}{,_arm64}/      per-cpu builds
 #   mac_release_universal/FlutterMacOS.framework
 #   mac_profile_universal/FlutterMacOS.framework
-# Then run reelx/tools/package_artifacts.py assets --platform macos --out-dir engine/src/out ...
+# Then run engine_perf/tools/package_artifacts.py assets --platform macos --out-dir engine/src/out ...
 set -euo pipefail
 
 die() { echo "build_engine: $*" >&2; exit 1; }
@@ -49,11 +49,11 @@ fi
 # files list arm64e.x1. A macOS 26 SDK (the Command Line Tools keep one) works.
 if compgen -G "$src/flutter/prebuilts/SDKs/MacOSX27*.sdk" >/dev/null; then
   die "the sync linked the macOS 27 SDK, which this engine can't link with;" \
-    "see reelx/ENGINE_SETUP.md › Troubleshooting (link a MacOSX26 SDK instead)"
+    "see engine_perf/ENGINE_SETUP.md › Troubleshooting (link a MacOSX26 SDK instead)"
 fi
 
-# Identity reported by ReelxEngineInfo (lib/ui/reelx/reelx_ffi.cc).
-"$root/reelx/tools/write_build_info.sh" "${REELX_PATCH_SET:-dev}"
+# Identity reported by EnginePerfInfo (lib/ui/engine_perf/engine_perf_ffi.cc).
+"$root/engine_perf/tools/write_build_info.sh" "${ENGINE_PERF_PATCH_SET:-dev}"
 
 gn="$src/flutter/tools/gn"
 # build <out-dir-name> <gn flags...>: configure, then build ${targets[@]}.
@@ -84,9 +84,9 @@ build host_debug_arm64 --runtime-mode debug --mac-cpu arm64
 if [[ $tests -eq 1 ]]; then
   out="$src/out/host_debug_arm64"
   [[ "$(uname -m)" == arm64 ]] || out="$src/out/host_debug"
-  "$out/ui_unittests" --gtest_filter='Reelx*:ImageEncoding*'
-  "$out/impeller_unittests" --gtest_filter='*Reelx*:*Snapshot*'
-  REELX_ENGINE_OUT="$src/out" "$root/reelx/tools/test/run_all.sh"
+  "$out/ui_unittests" --gtest_filter='EnginePerf*:ImageEncoding*'
+  "$out/impeller_unittests" --gtest_filter='*EnginePerf*:*Snapshot*'
+  ENGINE_PERF_ENGINE_OUT="$src/out" "$root/engine_perf/tools/test/run_all.sh"
 fi
 
 echo "built: $src/out"

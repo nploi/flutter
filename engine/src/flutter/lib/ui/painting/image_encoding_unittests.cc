@@ -14,9 +14,9 @@
 #include "flutter/common/task_runners.h"
 #include "flutter/display_list/image/dl_image_skia.h"
 #include "flutter/fml/synchronization/waitable_event.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 #include "flutter/lib/ui/painting/image.h"
 #include "flutter/lib/ui/painting/testing/mocks.h"
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/shell/common/shell_test.h"
 #include "flutter/shell/common/thread_host.h"
@@ -682,10 +682,10 @@ TEST(ImageEncodingImpellerTest, PngEncodingBGRA10XR) {
 
 #endif  // IMPELLER_SUPPORTS_RENDERING
 
-// Reelx P2b: with oneCopyReadback the raw formats give the same bytes as
+// EnginePerf P2b: with oneCopyReadback the raw formats give the same bytes as
 // before, rawUnmodified without a copy.
 namespace {
-sk_sp<SkImage> ReelxBgraImage() {
+sk_sp<SkImage> EnginePerfBgraImage() {
   SkImageInfo info =
       SkImageInfo::Make(64, 32, kBGRA_8888_SkColorType, kPremul_SkAlphaType);
   auto surface = SkSurfaces::Raster(info);
@@ -698,34 +698,35 @@ sk_sp<SkImage> ReelxBgraImage() {
   return surface->makeImageSnapshot()->makeRasterImage(nullptr);
 }
 
-sk_sp<SkData> ReelxEncode(const sk_sp<SkImage>& image,
-                          ImageByteFormat format,
-                          bool one_copy) {
-  reelx::SetAvailableForTesting(reelx::Feature::kOneCopyReadback, one_copy);
+sk_sp<SkData> EnginePerfEncode(const sk_sp<SkImage>& image,
+                               ImageByteFormat format,
+                               bool one_copy) {
+  engine_perf::SetAvailableForTesting(engine_perf::Feature::kOneCopyReadback,
+                                      one_copy);
   fml::StatusOr<sk_sp<SkData>> data = EncodeImage(image, format);
-  reelx::ResetFeaturesForTesting();
+  engine_perf::ResetFeaturesForTesting();
   return data.ok() ? data.value() : nullptr;
 }
 }  // namespace
 
-TEST(ImageEncodingReelxTest, OneCopyKeepsTheBytes) {
-  sk_sp<SkImage> image = ReelxBgraImage();
+TEST(ImageEncodingEnginePerfTest, OneCopyKeepsTheBytes) {
+  sk_sp<SkImage> image = EnginePerfBgraImage();
   for (ImageByteFormat format :
        {ImageByteFormat::kRawRGBA, ImageByteFormat::kRawUnmodified,
         ImageByteFormat::kRawStraightRGBA}) {
-    sk_sp<SkData> before = ReelxEncode(image, format, false);
-    sk_sp<SkData> after = ReelxEncode(image, format, true);
+    sk_sp<SkData> before = EnginePerfEncode(image, format, false);
+    sk_sp<SkData> after = EnginePerfEncode(image, format, true);
     ASSERT_TRUE(before && after) << format;
     EXPECT_TRUE(before->equals(after.get())) << format;
   }
 }
 
-TEST(ImageEncodingReelxTest, OneCopyUnmodifiedIsTheImagesOwnMemory) {
-  sk_sp<SkImage> image = ReelxBgraImage();
+TEST(ImageEncodingEnginePerfTest, OneCopyUnmodifiedIsTheImagesOwnMemory) {
+  sk_sp<SkImage> image = EnginePerfBgraImage();
   SkPixmap pixmap;
   ASSERT_TRUE(image->peekPixels(&pixmap));
   sk_sp<SkData> data =
-      ReelxEncode(image, ImageByteFormat::kRawUnmodified, true);
+      EnginePerfEncode(image, ImageByteFormat::kRawUnmodified, true);
   ASSERT_TRUE(data);
   EXPECT_EQ(data->data(), pixmap.addr());
   // The data keeps the image's pixels alive after the image goes.
@@ -734,13 +735,14 @@ TEST(ImageEncodingReelxTest, OneCopyUnmodifiedIsTheImagesOwnMemory) {
   EXPECT_EQ(0, std::memcmp(copy.data(), data->data(), copy.size()));
 }
 
-// Reelx P2c: with oneCopyReadback the copy runs on a concurrent worker,
+// EnginePerf P2c: with oneCopyReadback the copy runs on a concurrent worker,
 // without it on the calling thread as before.
-TEST(ImageEncodingReelxTest, CopyRunsOnAWorkerWhileOneCopyIsOn) {
+TEST(ImageEncodingEnginePerfTest, CopyRunsOnAWorkerWhileOneCopyIsOn) {
   auto loop = fml::ConcurrentMessageLoop::Create(1);
   const std::thread::id caller = std::this_thread::get_id();
 
-  reelx::SetAvailableForTesting(reelx::Feature::kOneCopyReadback, true);
+  engine_perf::SetAvailableForTesting(engine_perf::Feature::kOneCopyReadback,
+                                      true);
   fml::AutoResetWaitableEvent ran;
   std::thread::id on;
   DispatchEncode(loop->GetTaskRunner(), [&] {
@@ -750,19 +752,21 @@ TEST(ImageEncodingReelxTest, CopyRunsOnAWorkerWhileOneCopyIsOn) {
   ran.Wait();
   EXPECT_NE(on, caller);
 
-  reelx::SetAvailableForTesting(reelx::Feature::kOneCopyReadback, false);
+  engine_perf::SetAvailableForTesting(engine_perf::Feature::kOneCopyReadback,
+                                      false);
   bool ran_inline = false;
   DispatchEncode(loop->GetTaskRunner(),
                  [&] { ran_inline = std::this_thread::get_id() == caller; });
   EXPECT_TRUE(ran_inline);
 
   // No worker runner (as before the patch): at once.
-  reelx::SetAvailableForTesting(reelx::Feature::kOneCopyReadback, true);
+  engine_perf::SetAvailableForTesting(engine_perf::Feature::kOneCopyReadback,
+                                      true);
   ran_inline = false;
   DispatchEncode(nullptr,
                  [&] { ran_inline = std::this_thread::get_id() == caller; });
   EXPECT_TRUE(ran_inline);
-  reelx::ResetFeaturesForTesting();
+  engine_perf::ResetFeaturesForTesting();
 }
 
 }  // namespace testing

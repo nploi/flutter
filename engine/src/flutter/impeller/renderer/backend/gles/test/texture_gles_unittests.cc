@@ -169,7 +169,7 @@ TEST_P(TextureGLESTest, CreatingAndBindingEmptyTexturesDoesNotCrash) {
   ASSERT_EQ(texture, nullptr);
 }
 
-// Reelx P2a: the snapshot target pool drops the cached FBO of a texture it
+// EnginePerf P2a: the snapshot target pool drops the cached FBO of a texture it
 // hands out again (the FBO still has the old render target's stencil).
 TEST_P(TextureGLESTest, ForgetRenderTargetCachesDropsTheCachedFBO) {
   ContextGLES& context_gles = ContextGLES::Cast(*GetContext());

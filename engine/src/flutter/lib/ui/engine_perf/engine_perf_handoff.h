@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef FLUTTER_LIB_UI_REELX_REELX_HANDOFF_H_
-#define FLUTTER_LIB_UI_REELX_REELX_HANDOFF_H_
+#ifndef FLUTTER_LIB_UI_ENGINE_PERF_ENGINE_PERF_HANDOFF_H_
+#define FLUTTER_LIB_UI_ENGINE_PERF_ENGINE_PERF_HANDOFF_H_
 
-// Reelx P4 (fdHandoff): the per-descriptor writer behind
-// ReelxImageReadbackToFd and ReelxRepeatLastToFd (reelx_handoff.cc).
-// POSIX only; not built on Windows.
+// EnginePerf P4 (fdHandoff): the per-descriptor writer behind
+// EnginePerfImageReadbackToFd and EnginePerfRepeatLastToFd
+// (engine_perf_handoff.cc). POSIX only; not built on Windows.
 
 #if !defined(_WIN32)
 
@@ -27,7 +27,7 @@
 #include "third_party/skia/include/core/SkData.h"
 
 namespace flutter {
-namespace reelx {
+namespace engine_perf {
 
 constexpr int64_t kHandoffOk = 0;
 constexpr int64_t kHandoffReadbackFailed = 1;
@@ -182,9 +182,9 @@ class FdWriter : public std::enable_shared_from_this<FdWriter> {
   sk_sp<SkData> last_;
 };
 
-}  // namespace reelx
+}  // namespace engine_perf
 }  // namespace flutter
 
 #endif  // !defined(_WIN32)
 
-#endif  // FLUTTER_LIB_UI_REELX_REELX_HANDOFF_H_
+#endif  // FLUTTER_LIB_UI_ENGINE_PERF_ENGINE_PERF_HANDOFF_H_

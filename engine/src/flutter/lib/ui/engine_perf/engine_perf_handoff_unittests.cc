@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Reelx P4: the descriptor writer behind ReelxImageReadbackToFd.
+// EnginePerf P4: the descriptor writer behind EnginePerfImageReadbackToFd.
 
-#include "flutter/lib/ui/reelx/reelx_handoff.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_handoff.h"
 
 #include <signal.h>
 #include <unistd.h>
@@ -18,7 +18,7 @@
 #include "gtest/gtest.h"
 
 namespace flutter {
-namespace reelx {
+namespace engine_perf {
 namespace testing {
 namespace {
 
@@ -66,7 +66,7 @@ std::vector<uint8_t> Read(int fd, size_t size) {
   return bytes;
 }
 
-class ReelxHandoffTest : public ::testing::Test {
+class EnginePerfHandoffTest : public ::testing::Test {
  protected:
   void SetUp() override {
     signal(SIGPIPE, SIG_IGN);
@@ -83,7 +83,7 @@ class ReelxHandoffTest : public ::testing::Test {
 
 }  // namespace
 
-TEST_F(ReelxHandoffTest, WritesInCallOrderWhateverOrderReadbacksFinish) {
+TEST_F(EnginePerfHandoffTest, WritesInCallOrderWhateverOrderReadbacksFinish) {
   Messages messages;
   auto writer = std::make_shared<FdWriter>(fds_[1], messages.Poster());
   writer->Start();
@@ -101,7 +101,7 @@ TEST_F(ReelxHandoffTest, WritesInCallOrderWhateverOrderReadbacksFinish) {
   writer->Stop();
 }
 
-TEST_F(ReelxHandoffTest, ARepeatWritesThePreviousFrameEvenWhilePending) {
+TEST_F(EnginePerfHandoffTest, ARepeatWritesThePreviousFrameEvenWhilePending) {
   Messages messages;
   auto writer = std::make_shared<FdWriter>(fds_[1], messages.Poster());
   writer->Start();
@@ -118,7 +118,8 @@ TEST_F(ReelxHandoffTest, ARepeatWritesThePreviousFrameEvenWhilePending) {
   writer->Stop();
 }
 
-TEST_F(ReelxHandoffTest, AFailedReadbackIsReportedAndTheNextFrameStillGoes) {
+TEST_F(EnginePerfHandoffTest,
+       AFailedReadbackIsReportedAndTheNextFrameStillGoes) {
   Messages messages;
   auto writer = std::make_shared<FdWriter>(fds_[1], messages.Poster());
   writer->Start();
@@ -132,7 +133,7 @@ TEST_F(ReelxHandoffTest, AFailedReadbackIsReportedAndTheNextFrameStillGoes) {
   writer->Stop();
 }
 
-TEST_F(ReelxHandoffTest, AGoneReaderIsAWriteFailureWithItsErrno) {
+TEST_F(EnginePerfHandoffTest, AGoneReaderIsAWriteFailureWithItsErrno) {
   Messages messages;
   auto writer = std::make_shared<FdWriter>(fds_[1], messages.Poster());
   writer->Start();
@@ -147,7 +148,7 @@ TEST_F(ReelxHandoffTest, AGoneReaderIsAWriteFailureWithItsErrno) {
   writer->Stop();
 }
 
-TEST_F(ReelxHandoffTest, StoppingFailsWhatIsStillWaitingForBytes) {
+TEST_F(EnginePerfHandoffTest, StoppingFailsWhatIsStillWaitingForBytes) {
   Messages messages;
   auto writer = std::make_shared<FdWriter>(fds_[1], messages.Poster());
   writer->Start();
@@ -159,7 +160,7 @@ TEST_F(ReelxHandoffTest, StoppingFailsWhatIsStillWaitingForBytes) {
   EXPECT_EQ(got[0][1], kHandoffReadbackFailed);
 }
 
-TEST(ReelxHandoffDigestTest, EqualBytesEqualDigests) {
+TEST(EnginePerfHandoffDigestTest, EqualBytesEqualDigests) {
   std::vector<uint8_t> a(37, 5);
   std::vector<uint8_t> b(37, 5);
   std::vector<uint8_t> c(37, 5);
@@ -169,5 +170,5 @@ TEST(ReelxHandoffDigestTest, EqualBytesEqualDigests) {
 }
 
 }  // namespace testing
-}  // namespace reelx
+}  // namespace engine_perf
 }  // namespace flutter

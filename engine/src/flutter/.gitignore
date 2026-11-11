@@ -144,4 +144,4 @@ app.*.symbols
 
 # The gn-sdk from Chromium and managed by DEPS and gclient.
 /tools/fuchsia/gn-sdk
-lib/ui/reelx/reelx_build_info.h
+lib/ui/engine_perf/engine_perf_build_info.h

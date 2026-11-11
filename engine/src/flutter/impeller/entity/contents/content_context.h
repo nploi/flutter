@@ -121,17 +121,18 @@ enum ConicalKind {
 class Tessellator;
 class RenderTargetCache;
 
-/// Reelx P2a: a one-level snapshot target, reused once nothing else holds it.
+/// EnginePerf P2a: a one-level snapshot target, reused once nothing else holds
+/// it.
 struct SnapshotTarget {
   std::shared_ptr<Texture> texture;
-  /// Reelx P14: the attachments the framebuffer the backend cached for it
+  /// EnginePerf P14: the attachments the framebuffer the backend cached for it
   /// was made with, 0 for none.
   uint64_t attachments_id = 0;
 };
 
-/// Reelx P14: the MSAA colour and depth/stencil textures that snapshot targets
-/// of one size and format draw with. Snapshots draw one after another and
-/// keep the content of neither, so one pair serves them all.
+/// EnginePerf P14: the MSAA colour and depth/stencil textures that snapshot
+/// targets of one size and format draw with. Snapshots draw one after another
+/// and keep the content of neither, so one pair serves them all.
 struct SnapshotAttachments {
   /// Changes whenever the textures do, and is never used twice.
   uint64_t id = 0;
@@ -355,7 +356,7 @@ class ContentContext {
   /// @brief Resets the transients buffers held onto by the content context.
   void ResetTransientsBuffers();
 
-  /// @brief Reelx P13: makes the transients buffers a second set that only
+  /// @brief EnginePerf P13: makes the transients buffers a second set that only
   ///        snapshots use (created on the first call), or with false the
   ///        frames' set again. A snapshot draws between the two calls.
   ///
@@ -425,7 +426,7 @@ class ContentContext {
   std::shared_ptr<RenderTargetAllocator> render_target_cache_;
   std::shared_ptr<HostBuffer> data_host_buffer_;
   std::shared_ptr<HostBuffer> indexes_host_buffer_;
-  // Reelx P13: the set not in use (the snapshots' while frames draw, the
+  // EnginePerf P13: the set not in use (the snapshots' while frames draw, the
   // frames' while a snapshot draws).
   std::shared_ptr<HostBuffer> other_data_host_buffer_;
   std::shared_ptr<HostBuffer> other_indexes_host_buffer_;
@@ -438,7 +439,7 @@ class ContentContext {
       texture_cache_;
 
  public:
-  /// Reelx P2a, P14: what snapshots keep for the snapshots after them (see
+  /// EnginePerf P2a, P14: what snapshots keep for the snapshots after them (see
   /// DisplayListToTexture's pooled_target and pooled_attachments).
   SnapshotTargetPool& GetSnapshotTargetPool() const {
     return snapshot_target_pool_;

@@ -2,18 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Reelx P4 (fdHandoff): a ui.Image is read back exactly as toByteData would
-// and written to a file descriptor (an encoder's input) on a writer thread
-// of that descriptor, off the UI thread. Completions are posted to a Dart
-// port in call order as [token, status, bytes, digest] (+ errno when a write
-// failed). The last frame written to each descriptor is kept, so a reused
+// EnginePerf P4 (fdHandoff): a ui.Image is read back exactly as toByteData
+// would and written to a file descriptor (an encoder's input) on a writer
+// thread of that descriptor, off the UI thread. Completions are posted to a
+// Dart port in call order as [token, status, bytes, digest] (+ errno when a
+// write failed). The last frame written to each descriptor is kept, so a reused
 // frame is written again with no render or readback.
 
-#include "flutter/lib/ui/reelx/reelx_handoff.h"
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_handoff.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 
-// File descriptors and FIFOs are POSIX; on Windows Reelx writes to FFmpeg's
-// stdin itself, so the hand-off is not built there (see the end of the file).
+// File descriptors and FIFOs are POSIX; on Windows the caller writes to the
+// encoder's stdin itself, so the hand-off is not built there (see the end of
+// the file).
 #if !defined(_WIN32)
 
 #include <errno.h>
@@ -44,10 +45,10 @@
 #include "third_party/tonic/converter/dart_converter.h"
 
 namespace flutter {
-namespace reelx {
+namespace engine_perf {
 namespace {
 
-[[maybe_unused]] const bool kReelxFdHandoff = [] {
+[[maybe_unused]] const bool kEnginePerfFdHandoff = [] {
   SetAvailable(Feature::kFdHandoff);
   return true;
 }();
@@ -112,20 +113,21 @@ uint64_t FrameDigest(const uint8_t* data, size_t length) {
   return hash;
 }
 
-}  // namespace reelx
+}  // namespace engine_perf
 }  // namespace flutter
 
-using flutter::reelx::FdWriter;
-using flutter::reelx::WriterFor;
+using flutter::engine_perf::FdWriter;
+using flutter::engine_perf::WriterFor;
 
 extern "C" {
 
-REELX_EXPORT int32_t ReelxImageReadbackToFd(Dart_Handle image,
-                                            int32_t fd,
-                                            int32_t format,
-                                            int64_t port,
-                                            int64_t token) {
-  if (!flutter::reelx::IsFeatureOn(flutter::reelx::Feature::kFdHandoff)) {
+ENGINE_PERF_EXPORT int32_t EnginePerfImageReadbackToFd(Dart_Handle image,
+                                                       int32_t fd,
+                                                       int32_t format,
+                                                       int64_t port,
+                                                       int64_t token) {
+  if (!flutter::engine_perf::IsFeatureOn(
+          flutter::engine_perf::Feature::kFdHandoff)) {
     return -1;
   }
   Dart_Handle native = Dart_GetField(image, tonic::ToDart("_image"));
@@ -202,10 +204,11 @@ REELX_EXPORT int32_t ReelxImageReadbackToFd(Dart_Handle image,
   return 0;
 }
 
-REELX_EXPORT int32_t ReelxRepeatLastToFd(int32_t fd,
-                                         int64_t port,
-                                         int64_t token) {
-  if (!flutter::reelx::IsFeatureOn(flutter::reelx::Feature::kFdHandoff)) {
+ENGINE_PERF_EXPORT int32_t EnginePerfRepeatLastToFd(int32_t fd,
+                                                    int64_t port,
+                                                    int64_t token) {
+  if (!flutter::engine_perf::IsFeatureOn(
+          flutter::engine_perf::Feature::kFdHandoff)) {
     return -1;
   }
   std::shared_ptr<FdWriter> writer = WriterFor(fd, /*create=*/false);
@@ -215,11 +218,11 @@ REELX_EXPORT int32_t ReelxRepeatLastToFd(int32_t fd,
   return 0;
 }
 
-REELX_EXPORT int32_t ReelxReleaseFd(int32_t fd) {
+ENGINE_PERF_EXPORT int32_t EnginePerfReleaseFd(int32_t fd) {
   std::shared_ptr<FdWriter> writer;
   {
-    std::lock_guard<std::mutex> lock(flutter::reelx::WritersMutex());
-    auto& writers = flutter::reelx::Writers();
+    std::lock_guard<std::mutex> lock(flutter::engine_perf::WritersMutex());
+    auto& writers = flutter::engine_perf::Writers();
     auto it = writers.find(fd);
     if (it == writers.end()) {
       return 0;
@@ -237,21 +240,21 @@ REELX_EXPORT int32_t ReelxReleaseFd(int32_t fd) {
 
 extern "C" {
 
-REELX_EXPORT int32_t ReelxImageReadbackToFd(Dart_Handle image,
-                                            int32_t fd,
-                                            int32_t format,
-                                            int64_t port,
-                                            int64_t token) {
+ENGINE_PERF_EXPORT int32_t EnginePerfImageReadbackToFd(Dart_Handle image,
+                                                       int32_t fd,
+                                                       int32_t format,
+                                                       int64_t port,
+                                                       int64_t token) {
   return -1;
 }
 
-REELX_EXPORT int32_t ReelxRepeatLastToFd(int32_t fd,
-                                         int64_t port,
-                                         int64_t token) {
+ENGINE_PERF_EXPORT int32_t EnginePerfRepeatLastToFd(int32_t fd,
+                                                    int64_t port,
+                                                    int64_t token) {
   return -1;
 }
 
-REELX_EXPORT int32_t ReelxReleaseFd(int32_t fd) {
+ENGINE_PERF_EXPORT int32_t EnginePerfReleaseFd(int32_t fd) {
   return 0;
 }
 

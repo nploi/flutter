@@ -234,9 +234,9 @@ TEST_P(HostBufferTest, EmplaceWithFailingAllocationDoesntCrash) {
   EXPECT_EQ(view.GetRange().length, 0u);
 }
 
-// Reelx P13: a reset is held back while work marked in flight still reads
+// EnginePerf P13: a reset is held back while work marked in flight still reads
 // the buffers it would hand out next.
-TEST_P(HostBufferTest, ReelxResetIfIdleWaitsForWorkInFlight) {
+TEST_P(HostBufferTest, EnginePerfResetIfIdleWaitsForWorkInFlight) {
   auto buffer = HostBuffer::Create(GetContext()->GetResourceAllocator(),
                                    GetContext()->GetIdleWaiter(), 256);
   std::function<void()> done = buffer->MarkInFlight();
@@ -256,7 +256,7 @@ TEST_P(HostBufferTest, ReelxResetIfIdleWaitsForWorkInFlight) {
   EXPECT_EQ(buffer->GetStateForTest().current_frame, 0u);
 }
 
-TEST_P(HostBufferTest, ReelxInFlightIsCountedAndDoneCountsOnce) {
+TEST_P(HostBufferTest, EnginePerfInFlightIsCountedAndDoneCountsOnce) {
   auto buffer = HostBuffer::Create(GetContext()->GetResourceAllocator(),
                                    GetContext()->GetIdleWaiter(), 256);
   std::function<void()> first = buffer->MarkInFlight();
@@ -272,7 +272,7 @@ TEST_P(HostBufferTest, ReelxInFlightIsCountedAndDoneCountsOnce) {
   EXPECT_TRUE(buffer->ResetIfIdle());
 }
 
-TEST_P(HostBufferTest, ReelxInFlightDoneMayOutliveTheBuffer) {
+TEST_P(HostBufferTest, EnginePerfInFlightDoneMayOutliveTheBuffer) {
   std::function<void()> done;
   {
     auto buffer = HostBuffer::Create(GetContext()->GetResourceAllocator(),

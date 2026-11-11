@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef FLUTTER_LIB_UI_REELX_REELX_SHADER_BYTES_H_
-#define FLUTTER_LIB_UI_REELX_REELX_SHADER_BYTES_H_
+#ifndef FLUTTER_LIB_UI_ENGINE_PERF_ENGINE_PERF_SHADER_BYTES_H_
+#define FLUTTER_LIB_UI_ENGINE_PERF_ENGINE_PERF_SHADER_BYTES_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -11,7 +11,7 @@
 #include <string>
 
 #include "flutter/fml/mapping.h"
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 
 // Fragment shaders from bytes.
 //
@@ -28,17 +28,17 @@ extern "C" {
 /// -1 when an argument isn't a non-empty String / Uint8List, -3 when the
 /// bytes aren't a shader bundle. dart:ui keeps a program it loaded for a key,
 /// so give changed bytes a new key (a content hash, for example).
-REELX_EXPORT int32_t ReelxRegisterShaderBytes(Dart_Handle key,
-                                              Dart_Handle bytes);
+ENGINE_PERF_EXPORT int32_t EnginePerfRegisterShaderBytes(Dart_Handle key,
+                                                         Dart_Handle bytes);
 
 /// Forgets the bytes registered under [key] (programs already loaded keep
 /// working). Returns 0, -1 for a bad key, -4 when nothing was registered.
-REELX_EXPORT int32_t ReelxUnregisterShaderBytes(Dart_Handle key);
+ENGINE_PERF_EXPORT int32_t EnginePerfUnregisterShaderBytes(Dart_Handle key);
 
 }  // extern "C"
 
 namespace flutter {
-namespace reelx {
+namespace engine_perf {
 
 /// Result codes of the functions above.
 enum ShaderBytesResult : int32_t {
@@ -61,7 +61,7 @@ std::unique_ptr<fml::Mapping> GetRegisteredShader(const std::string& key);
 /// Test hook.
 void ClearShaderBytesForTesting();
 
-}  // namespace reelx
+}  // namespace engine_perf
 }  // namespace flutter
 
-#endif  // FLUTTER_LIB_UI_REELX_REELX_SHADER_BYTES_H_
+#endif  // FLUTTER_LIB_UI_ENGINE_PERF_ENGINE_PERF_SHADER_BYTES_H_

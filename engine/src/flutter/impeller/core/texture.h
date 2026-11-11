@@ -57,10 +57,10 @@ class Texture {
   /// modified and the mipmaps hasn't been regenerated.
   bool NeedsMipmapGeneration() const;
 
-  /// Reelx P1: a one-level texture whose maker would have given it mipmaps.
-  /// Draws that sample it with mipmaps use a mipmapped copy made once on
-  /// first need (see impeller/display_list/lazy_mipmaps.h); draws that don't,
-  /// and readbacks, use this texture as it is.
+  /// EnginePerf P1: a one-level texture whose maker would have given it
+  /// mipmaps. Draws that sample it with mipmaps use a mipmapped copy made once
+  /// on first need (see impeller/display_list/lazy_mipmaps.h); draws that
+  /// don't, and readbacks, use this texture as it is.
   void SetWantsLazyMipmaps(bool wants);
   bool WantsLazyMipmaps() const;
 
@@ -68,7 +68,7 @@ class Texture {
   const std::shared_ptr<Texture>& GetLazyMipmapped() const;
   void SetLazyMipmapped(std::shared_ptr<Texture> mipmapped) const;
 
-  /// Reelx P15: a texture whose levels above 0 are allocated but were left
+  /// EnginePerf P15: a texture whose levels above 0 are allocated but were left
   /// unfilled by its upload. A draw that could read them fills them first
   /// (see impeller/display_list/lazy_mipmaps.h); until then only level 0
   /// holds pixels, and only level 0 may be sampled. Safe to call from any
@@ -76,8 +76,8 @@ class Texture {
   void SetDeferredMipmaps(bool deferred);
   bool HasDeferredMipmaps() const;
 
-  /// Reelx P2a: forgets the framebuffer (or FBO) the backend cached when this
-  /// texture was last a render target. That cache also holds the other
+  /// EnginePerf P2a: forgets the framebuffer (or FBO) the backend cached when
+  /// this texture was last a render target. That cache also holds the other
   /// attachments of that render target, so a texture reused as the color
   /// target of a new render target must drop it first.
   virtual void ForgetRenderTargetCaches() {}

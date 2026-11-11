@@ -1,8 +1,8 @@
 # Using the patched engine on a machine
 
-How to build this fork's Flutter engine and use it on your own computer or any other one: for `reelx render`, for `flutter test` while working on Reelx, and inside an app build. What each patch does is in [REELX_PATCHES.md](../REELX_PATCHES.md).
+How to build this fork's Flutter engine and use it on your own computer or any other one: for `flutter test` and inside an app build. What each patch does is in [ENGINE_PERF_PATCHES.md](../ENGINE_PERF_PATCHES.md).
 
-Everything here keeps the normal Flutter SDK. The patched engine is used next to it, and removing it brings back the stock engine. Reelx finds the engine's extra C functions at run time; with a stock engine it runs exactly as before.
+Everything here keeps the normal Flutter SDK. The patched engine is used next to it, and removing it brings back the stock engine. An app finds the engine's extra C functions at run time (`dart:ffi`); with a stock engine it keeps its default paths.
 
 ## What you need
 
@@ -14,12 +14,10 @@ Everything here keeps the normal Flutter SDK. The patched engine is used next to
 | Disk | ~40 GB for the checkout, 10–20 GB per build folder | same | same |
 | Time | first sync 20–40 min; a build 30 min–3 h depending on the machine | same | same |
 
-FFmpeg on `PATH` is needed for renders and export tests, as without the patched engine.
-
 ## 1. Get the source and sync
 
 ```sh
-git clone --branch engine-perf/3.47.9-wip https://github.com/nploi/flutter.git flutter-engine
+git clone --branch engine-perf/3.47.9-wip https://github.com/<owner>/flutter.git flutter-engine
 cd flutter-engine
 cat > .gclient <<'EOF'
 solutions = [
@@ -53,10 +51,10 @@ All commands run from the checkout's root. `gn` writes a build folder under `eng
 **macOS, everything at once** (release and profile `FlutterMacOS.framework` for both CPUs, merged into universal ones, plus the tester):
 
 ```sh
-reelx/tools/build_engine.sh            # add --sync to sync first
+engine_perf/tools/build_engine.sh            # add --sync to sync first
 ```
 
-**Any OS, the tester only** (what `reelx render` and `flutter test` need):
+**Any OS, the tester only** (what `flutter test` needs):
 
 ```sh
 python3 engine/src/flutter/tools/gn --no-rbe --no-goma          # → out/host_debug(_arm64)
@@ -71,7 +69,7 @@ Add `--unoptimized` to `gn` for a faster build that runs slower (folder `host_de
 
 | OS | Configure | Target | Result |
 |---|---|---|---|
-| macOS | `reelx/tools/build_engine.sh` | (all) | `out/mac_release_universal/FlutterMacOS.framework` |
+| macOS | `engine_perf/tools/build_engine.sh` | (all) | `out/mac_release_universal/FlutterMacOS.framework` |
 | Linux | `gn --runtime-mode release --no-rbe --no-goma` | `flutter/shell/platform/linux:flutter_linux_gtk` | `out/host_release/libflutter_linux_gtk.so` |
 | Windows | `gn --runtime-mode release --no-rbe --no-goma` | `flutter/shell/platform/windows:flutter_windows` | `out\host_release\flutter_windows.dll` |
 
@@ -86,28 +84,16 @@ New-Item -ItemType Junction -Path engine\src\out\host_debug\dart-sdk -Target eng
 
 ## 3. Use it
 
-### `reelx render` (an engine folder)
+### An engine folder
 
-The CLI uses a local engine when it finds an engine folder: `REELX_ENGINE_FOLDER`, else `~/.reelx/engine` (`%USERPROFILE%\.reelx\engine` on Windows). The folder must hold `out/host_debug/flutter_tester` (`flutter_tester.exe` on Windows), its `flutter_patched_sdk`, `icudtl.dat`, `gen/` and a `dart-sdk`. The checkout's `engine/src` is already such a folder once `out/host_debug` exists:
+`flutter test --local-engine` needs only an engine folder: `out/host_debug/flutter_tester` (`flutter_tester.exe` on Windows), its `flutter_patched_sdk`, `icudtl.dat`, `gen/` and a `dart-sdk`. The checkout's `engine/src` is already such a folder once `out/host_debug` exists; CI and releases ship the same layout (`engine-folder-<os>-<cpu>.zip`):
 
 ```sh
 # Apple silicon or an --unoptimized build: name the folder host_debug.
 ln -s host_debug_arm64 engine/src/out/host_debug       # or host_debug_unopt
-export REELX_ENGINE_FOLDER="$PWD/engine/src"
-reelx render
 ```
 
-What the CLI does with it:
-
-- macOS: renders with Impeller on Metal.
-- Linux: renders with Skia (Impeller's shaders stall on software GL); `REELX_ENGINE_IMPELLER=1` asks for Impeller on a machine with a real GPU.
-- Windows: renders with Skia.
-
-Without the variable and without `~/.reelx/engine`, renders use the stock engine as before. Checked on Linux: a render through the engine folder ran the folder's tester and gave an MP4 byte-identical to the stock render.
-
-Once an engine release exists (`engine-3.47.9-ext.<n>`), the editor's `tool/release/engine/fetch_engine.sh --engine-folder <tag> ~/.reelx/engine` downloads and checks the same folder instead of building it (set `REELX_ENGINE_REPO=nploi/flutter`).
-
-### `flutter test` while working on Reelx
+### `flutter test`
 
 Pass the engine to any Flutter command:
 
@@ -117,11 +103,9 @@ flutter test --local-engine-src-path=$E --local-engine=host_debug --local-engine
 #   + --enable-impeller to test Impeller (Metal on macOS, Vulkan or OpenGL ES on Linux)
 ```
 
-Reelx's gated export tests run the same way (`--dart-define=REELX_RUN_EXPORT_TESTS=true`).
-
 ### Inside an app build
 
-The app is built with the stock SDK, then its engine is replaced. The release lanes will do this from an engine release (macOS today on reelx_editor's `macos-engine-lane`; Linux, Windows, Android and iOS are in progress). By hand:
+The app is built with the stock SDK, then its engine is replaced:
 
 | OS | After | Replace |
 |---|---|---|
@@ -129,7 +113,7 @@ The app is built with the stock SDK, then its engine is replaced. The release la
 | Linux | `flutter build linux --release` | `build/linux/x64/release/bundle/lib/libflutter_linux_gtk.so` with `out/host_release/libflutter_linux_gtk.so` |
 | Windows | `flutter build windows --release` | `build\windows\x64\runner\Release\flutter_windows.dll` with `out\host_release\flutter_windows.dll` |
 
-Status: the macOS swap is covered by the lane's tests but not yet run on a Mac; the Linux and Windows swaps by hand are not yet checked. An app built with another Flutter version than the engine's will not start.
+Status: these swaps are not yet checked by hand. An app built with another Flutter version than the engine's will not start.
 
 ### On a phone (Android and iOS)
 
@@ -171,7 +155,7 @@ The "Engine" workflow (`.github/workflows/engine.yml`) builds every push to `eng
 
 | Artifact | Contents |
 |---|---|
-| `engine-folder-linux-x64`, `engine-folder-macos-arm64`, `engine-folder-windows-x64` | the engine folder (`out/host_debug`, from an unoptimized build) for `reelx render` and `flutter test` |
+| `engine-folder-linux-x64`, `engine-folder-macos-arm64`, `engine-folder-windows-x64` | the engine folder (`out/host_debug`, from an unoptimized build) for `flutter test` |
 | `libflutter-release-android-arm64`, `libflutter-profile-android-arm64` | `lib/arm64-v8a/libflutter.so` |
 | `Flutter-release.xcframework`, `Flutter-profile.xcframework` | `Flutter.xcframework` for iOS devices |
 
@@ -186,32 +170,31 @@ To build only some platforms or phone modes, run it by hand: `gh workflow run en
 
 ## 4. Check that it is the patched engine
 
-Exported functions (seven, all starting with `Reelx`):
+Exported functions (seven, all starting with `EnginePerf`):
 
 ```sh
-nm -D --defined-only engine/src/out/host_debug/flutter_tester | grep Reelx             # Linux
-nm -gU engine/src/out/host_debug_arm64/flutter_tester | grep Reelx                     # macOS
+nm -D --defined-only engine/src/out/host_debug/flutter_tester | grep EnginePerf             # Linux
+nm -gU engine/src/out/host_debug_arm64/flutter_tester | grep EnginePerf                     # macOS
 # Windows: engine\src\flutter\buildtools\windows-x64\clang\bin\llvm-readobj.exe --coff-exports flutter_windows.dll
-engine/src/flutter/buildtools/linux-x64/clang/bin/llvm-nm -D --defined-only lib/arm64-v8a/libflutter.so | grep Reelx   # Android
-nm -gU Flutter.xcframework/ios-arm64/Flutter.framework/Flutter | grep Reelx              # iOS
+engine/src/flutter/buildtools/linux-x64/clang/bin/llvm-nm -D --defined-only lib/arm64-v8a/libflutter.so | grep EnginePerf   # Android
+nm -gU Flutter.xcframework/ios-arm64/Flutter.framework/Flutter | grep EnginePerf              # iOS
 ```
 
-From Dart, in a test run on the engine:
+From Dart, in a test run on the engine (a stock engine has no such symbol):
 
 ```dart
-import 'package:reelx/reelx.dart';
-import 'package:reelx_export/reelx_export.dart';
+import 'dart:ffi';
+import 'package:ffi/ffi.dart';
 
-print(ReelxEngine.current.infoLine); // REELX_ENGINE {"patchSet":...,"features":{...}}
-print(ShaderBytes.isSupported);      // true
+final info = DynamicLibrary.process()
+    .lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>('EnginePerfInfo');
+print(info().toDartString()); // {"patchSet":...,"features":{...}}
 ```
-
-Every export also logs one `REELX_ENGINE {...}` line: `{"stock":true,...}` on the stock engine.
 
 ## 5. Turning it off
 
-- Renders: unset `REELX_ENGINE_FOLDER` and remove `~/.reelx/engine`.
-- One export: `ExportConfig(engineExtensions: EngineExtensions.off)`, or `EngineExtensions.parse('without:fdHandoff')` to drop single features. The engine's previous switches come back after the export.
+- Use the stock engine again: drop `--local-engine`, or put the stock engine library back into the app.
+- At run time: `EnginePerfSetFeature(name, 0)` switches a single feature off; `EnginePerfInfo` lists them.
 
 ## 6. Releasing an engine
 
@@ -223,13 +206,11 @@ git push origin engine-3.47.9-ext.1
 ```
 
 1. **prepare** checks the tag, reads the stock Flutter's engine revision and content hash (what an app's `flutter --version` reports), refuses a tag whose engine revision differs, and creates a **draft** release.
-2. **build** jobs, one per platform part on GitHub's runners: the Linux library, the macOS framework per CPU, the Windows DLL, and the engine folders (Linux x64, macOS arm64 and x64, Windows x64). Each writes the build identity (`reelx/tools/write_build_info.sh`, so `ReelxEngineInfo` reports the patch set), builds, packages (`reelx/tools/package_artifacts.py`) and uploads to the draft.
+2. **build** jobs, one per platform part on GitHub's runners: the Linux library, the macOS framework per CPU, the Windows DLL, and the engine folders (Linux x64, macOS arm64 and x64, Windows x64). Each writes the build identity (`engine_perf/tools/write_build_info.sh`, so `EnginePerfInfo` reports the patch set), builds, packages (`engine_perf/tools/package_artifacts.py`) and uploads to the draft.
 3. **macos-universal** merges the two CPUs' frameworks into the universal one.
 4. **finalize** writes `manifest.json` and `SHA256SUMS` over every asset.
 
-Nothing is public until you publish the draft: `gh release edit engine-3.47.9-ext.1 --repo nploi/flutter --draft=false`. Assets are never replaced; to rebuild, delete the draft and push the tag again. Android and iOS engines are not release assets yet; the "Engine" workflow's run artifacts have them (see "Builds from CI").
-
-Then pin the release in the editor (`tool/release/engine/ENGINE_VERSION`) in its own PR, and on a machine install the engine folder with `fetch_engine.sh --engine-folder`.
+Nothing is public until you publish the draft: `gh release edit engine-3.47.9-ext.1 --repo <owner>/flutter --draft=false`. Assets are never replaced; to rebuild, delete the draft and push the tag again. Android and iOS engines are not release assets yet; the "Engine" workflow's run artifacts have them (see "Builds from CI").
 
 ## Troubleshooting
 
@@ -241,8 +222,8 @@ Then pin the release in the editor (`tool/release/engine/ENGINE_VERSION`) in its
 | A Mac swaps hard while linking (16–24 GB) | Each LTO link takes a few GB; link the many test binaries at `-j 2` (`ninja -j 2 ...` after the objects are built). |
 | `/usr/bin/env: 'vpython3': No such file` on `git rebase`/`push` | The checkout's git hooks need depot_tools on `PATH`. |
 | `flutter test --local-engine` can't find the Dart SDK | Link `dart-sdk` into the build folder (step 2). |
-| Impeller tests hang or abort on a Linux machine without a GPU | Use Skia (the CLI's default on Linux) or OpenGL ES; Vulkan needs a real driver. |
+| Impeller tests hang or abort on a Linux machine without a GPU | Use Skia or OpenGL ES; Vulkan needs a real driver. |
 | The app crashes at start after a swap | The engine and the SDK that built the app differ: both must be 3.47.9. |
-| `ShaderBytes.isSupported` is false | The engine isn't the patched one, or on Android/Windows an older Reelx that looked in the wrong library (fixed in reelx `engineLibrary()`). |
+| `EnginePerfInfo` is not found | The engine isn't the patched one, or the lookup used the wrong library: `DynamicLibrary.process()` on macOS, iOS and Linux, `DynamicLibrary.open('libflutter.so')` on Android, `flutter_windows.dll` on Windows. |
 
 CI builds and tests the patches on every push to `engine-perf/*-wip` and every pull request into it: the "Engine" workflow in this repository's Actions tab, one job per platform (see "Builds from CI").

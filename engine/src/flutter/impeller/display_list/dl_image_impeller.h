@@ -29,11 +29,11 @@ class DlImageImpeller : public flutter::DlImage {
       const std::shared_ptr<Context>& context) const = 0;
 
   /// The image's texture, with its mipmaps filled if its upload left them
-  /// out (Reelx P15): what a draw gets that may sample any level.
+  /// out (EnginePerf P15): what a draw gets that may sample any level.
   std::shared_ptr<Texture> GetCachedTexture(
       const ContentContext& renderer) const;
 
-  /// Reelx P15: the image's texture as it was uploaded, for a draw that
+  /// EnginePerf P15: the image's texture as it was uploaded, for a draw that
   /// decides for itself whether it reads more than level 0.
   std::shared_ptr<Texture> GetCachedTextureAsUploaded(
       const ContentContext& renderer) const;

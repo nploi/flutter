@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/lib/ui/reelx/reelx_shader_bytes.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_shader_bytes.h"
 
 #include <vector>
 
@@ -11,12 +11,12 @@
 #include "gtest/gtest.h"
 
 namespace flutter {
-namespace reelx {
+namespace engine_perf {
 namespace testing {
 
 namespace {
 
-class ReelxShaderBytesTest : public ::testing::Test {
+class EnginePerfShaderBytesTest : public ::testing::Test {
  protected:
   void SetUp() override { ClearShaderBytesForTesting(); }
   void TearDown() override { ClearShaderBytesForTesting(); }
@@ -32,7 +32,7 @@ std::vector<uint8_t> Bundle(const char* name = "filter_shader.frag.iplr") {
 
 }  // namespace
 
-TEST_F(ReelxShaderBytesTest, RegisteredBytesComeBackUnchanged) {
+TEST_F(EnginePerfShaderBytesTest, RegisteredBytesComeBackUnchanged) {
   std::vector<uint8_t> bundle = Bundle();
   ASSERT_EQ(RegisterShaderBytes("mem/fade.frag", bundle.data(), bundle.size()),
             kShaderBytesOk);
@@ -44,7 +44,7 @@ TEST_F(ReelxShaderBytesTest, RegisteredBytesComeBackUnchanged) {
   EXPECT_FALSE(GetRegisteredShader("mem/other.frag"));
 }
 
-TEST_F(ReelxShaderBytesTest, TheMappingDecodesLikeTheAsset) {
+TEST_F(EnginePerfShaderBytesTest, TheMappingDecodesLikeTheAsset) {
   std::vector<uint8_t> bundle = Bundle();
   ASSERT_EQ(RegisterShaderBytes("k", bundle.data(), bundle.size()),
             kShaderBytesOk);
@@ -68,7 +68,7 @@ TEST_F(ReelxShaderBytesTest, TheMappingDecodesLikeTheAsset) {
   }
 }
 
-TEST_F(ReelxShaderBytesTest, BytesThatAreNotABundleAreRefused) {
+TEST_F(EnginePerfShaderBytesTest, BytesThatAreNotABundleAreRefused) {
   std::vector<uint8_t> junk = {'n', 'o', 't', ' ', 'a', ' ', 's', 'h',
                                'a', 'd', 'e', 'r', 0,   1,   2,   3};
   EXPECT_EQ(RegisterShaderBytes("junk", junk.data(), junk.size()),
@@ -81,7 +81,7 @@ TEST_F(ReelxShaderBytesTest, BytesThatAreNotABundleAreRefused) {
   EXPECT_FALSE(GetRegisteredShader("cut"));
 }
 
-TEST_F(ReelxShaderBytesTest, BadArgumentsAreRefused) {
+TEST_F(EnginePerfShaderBytesTest, BadArgumentsAreRefused) {
   std::vector<uint8_t> bundle = Bundle();
   EXPECT_EQ(RegisterShaderBytes("", bundle.data(), bundle.size()),
             kShaderBytesBadArgument);
@@ -90,7 +90,7 @@ TEST_F(ReelxShaderBytesTest, BadArgumentsAreRefused) {
             kShaderBytesBadArgument);
 }
 
-TEST_F(ReelxShaderBytesTest, ASecondRegistrationReplacesTheFirst) {
+TEST_F(EnginePerfShaderBytesTest, ASecondRegistrationReplacesTheFirst) {
   std::vector<uint8_t> first = Bundle("filter_shader.frag.iplr");
   std::vector<uint8_t> second = Bundle("double_sampler.frag.iplr");
   ASSERT_NE(first, second);
@@ -103,7 +103,7 @@ TEST_F(ReelxShaderBytesTest, ASecondRegistrationReplacesTheFirst) {
   EXPECT_EQ(mapping->GetSize(), second.size());
 }
 
-TEST_F(ReelxShaderBytesTest, UnregisterForgetsTheKeyButLiveMappingsStay) {
+TEST_F(EnginePerfShaderBytesTest, UnregisterForgetsTheKeyButLiveMappingsStay) {
   std::vector<uint8_t> bundle = Bundle();
   ASSERT_EQ(RegisterShaderBytes("k", bundle.data(), bundle.size()),
             kShaderBytesOk);
@@ -119,5 +119,5 @@ TEST_F(ReelxShaderBytesTest, UnregisterForgetsTheKeyButLiveMappingsStay) {
 }
 
 }  // namespace testing
-}  // namespace reelx
+}  // namespace engine_perf
 }  // namespace flutter

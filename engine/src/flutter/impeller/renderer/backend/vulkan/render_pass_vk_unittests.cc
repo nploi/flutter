@@ -91,8 +91,8 @@ TEST(RenderPassVK, SetViewportPropagatesAllUserSuppliedFields) {
   EXPECT_FLOAT_EQ(vp.maxDepth, 0.75f);
 }
 
-// Reelx P2a: a resolve texture reused with new MSAA and stencil textures (the
-// snapshot target pool) must not keep the framebuffer cached for the old
+// EnginePerf P2a: a resolve texture reused with new MSAA and stencil textures
+// (the snapshot target pool) must not keep the framebuffer cached for the old
 // ones, whose image views are gone.
 TEST(RenderPassVK, ForgottenRenderTargetCachesMakeANewFramebuffer) {
   std::shared_ptr<ContextVK> context = MockVulkanContextBuilder().Build();
@@ -136,7 +136,7 @@ TEST(RenderPassVK, ForgottenRenderTargetCachesMakeANewFramebuffer) {
   EXPECT_NE(new_framebuffer, old_framebuffer);
 }
 
-// Reelx P14: a render target made again from the same MSAA, resolve and
+// EnginePerf P14: a render target made again from the same MSAA, resolve and
 // depth/stencil textures (a pooled snapshot target with pooled attachments)
 // draws with the framebuffer and render pass cached for the first one.
 TEST(RenderPassVK, KeptAttachmentsKeepTheFramebuffer) {

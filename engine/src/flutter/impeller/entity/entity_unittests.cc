@@ -1700,7 +1700,7 @@ static Vector3 RGBToYUV(Vector3 rgb, YUVColorSpace yuv_color_space) {
   return yuv;
 }
 
-// Reelx P5: the BT.709 matrices, after the shader's offsets, turn their
+// EnginePerf P5: the BT.709 matrices, after the shader's offsets, turn their
 // space's YUV back into the colour. (The BT.601 limited-range matrix keeps
 // upstream's rounded coefficients, about 0.02 off, so it isn't held to this.)
 TEST(EntityTest, YUVToRGBMatricesInvertTheirSpaces) {

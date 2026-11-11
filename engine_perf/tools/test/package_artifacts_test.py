@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for reelx/tools/package_artifacts.py against fake engine out trees."""
+"""Tests for engine_perf/tools/package_artifacts.py against fake engine out trees."""
 
 import hashlib
 import json

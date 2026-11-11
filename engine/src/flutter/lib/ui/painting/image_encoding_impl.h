@@ -18,7 +18,7 @@
 
 namespace flutter {
 
-/// Reelx P2c: runs [encode] (a readback's copy or swizzle) on
+/// EnginePerf P2c: runs [encode] (a readback's copy or swizzle) on
 /// [concurrent_runner] while oneCopyReadback is on, else at once on the
 /// calling thread (the IO thread), as before.
 void DispatchEncode(

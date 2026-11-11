@@ -127,14 +127,15 @@ class HostBuffer {
   void Reset();
 
   //----------------------------------------------------------------------------
-  /// @brief Reelx P13: says that GPU work which hasn't completed yet reads
+  /// @brief EnginePerf P13: says that GPU work which hasn't completed yet reads
   ///        what was emplaced since the last reset. The returned closure is
   ///        to be called when that work has completed, on any thread; calls
   ///        after the first do nothing.
   [[nodiscard]] std::function<void()> MarkInFlight();
 
   //----------------------------------------------------------------------------
-  /// @brief Reelx P13: Reset(), unless work marked in flight still reads the
+  /// @brief EnginePerf P13: Reset(), unless work marked in flight still reads
+  /// the
   ///        buffers a reset would hand out next. For callers that, unlike
   ///        onscreen frames, nothing limits to a few frames in flight.
   ///
@@ -189,7 +190,7 @@ class HostBuffer {
   size_t offset_ = 0u;
   size_t frame_index_ = 0u;
   size_t minimum_uniform_alignment_ = 0u;
-  // Reelx P13: per arena entry, the work marked in flight that reads it.
+  // EnginePerf P13: per arena entry, the work marked in flight that reads it.
   // Shared with the closures MarkInFlight returns, which can outlive this.
   std::array<std::shared_ptr<std::atomic<size_t>>, kHostBufferArenaSize>
       in_flight_;

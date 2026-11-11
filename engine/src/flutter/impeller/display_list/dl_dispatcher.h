@@ -293,7 +293,7 @@ class DlDispatcherBase : public flutter::DlOpReceiver {
 
   std::shared_ptr<Texture> GetTexture(const sk_sp<flutter::DlImage>& image);
 
-  /// Reelx P15: [image]'s texture without filling the mipmaps its upload
+  /// EnginePerf P15: [image]'s texture without filling the mipmaps its upload
   /// left out.
   std::shared_ptr<Texture> GetTextureAsUploaded(
       const sk_sp<flutter::DlImage>& image);
@@ -467,7 +467,7 @@ std::shared_ptr<Texture> DisplayListToTexture(
     bool* attachments_hit = nullptr,
     bool single_sample = false);
 
-/// Reelx P2a/P14: the target a snapshot of [size] draws into. With
+/// EnginePerf P2a/P14: the target a snapshot of [size] draws into. With
 /// [pooled_target] its colour texture comes from [pool] when one of an
 /// earlier snapshot is free ([pool_hit] says so); with [pooled_attachments]
 /// it draws with the depth/stencil (and, where MSAA resolves explicitly, the
@@ -486,12 +486,12 @@ RenderTarget MakeSnapshotTarget(const Context& context,
                                 bool pooled_attachments,
                                 bool* attachments_hit);
 
-/// Reelx P16: whether every draw in [display_list] is a fill of a rectangle
-/// whose edges are on pixel boundaries (rectangles with integral coordinates,
-/// paint and colour fills), with no transform, clip, layer, stroke, mask or
-/// image filter. Every pixel of such a list is either wholly covered by a
-/// draw or not at all, so multisampling changes none of its pixels and the
-/// list can be rendered with one sample per pixel.
+/// EnginePerf P16: whether every draw in [display_list] is a fill of a
+/// rectangle whose edges are on pixel boundaries (rectangles with integral
+/// coordinates, paint and colour fills), with no transform, clip, layer,
+/// stroke, mask or image filter. Every pixel of such a list is either wholly
+/// covered by a draw or not at all, so multisampling changes none of its pixels
+/// and the list can be rendered with one sample per pixel.
 bool DrawsOnlyPixelAlignedFills(const flutter::DisplayList& display_list);
 
 /// @brief Render the provided display list to the render target.

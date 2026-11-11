@@ -15,7 +15,7 @@
 #include "flutter/impeller/display_list/dl_image_impeller.h"
 #include "flutter/impeller/renderer/command_buffer.h"
 #include "flutter/impeller/renderer/context.h"
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 #include "impeller/core/device_buffer.h"
 #include "impeller/core/formats.h"
 #include "impeller/core/texture_descriptor.h"
@@ -35,9 +35,9 @@
 namespace flutter {
 
 namespace {
-// Reelx P15 (lazyImageMips) lives in this file's uploads.
-[[maybe_unused]] const bool kReelxLazyImageMips = [] {
-  reelx::SetAvailable(reelx::Feature::kLazyImageMips);
+// EnginePerf P15 (lazyImageMips) lives in this file's uploads.
+[[maybe_unused]] const bool kEnginePerfLazyImageMips = [] {
+  engine_perf::SetAvailable(engine_perf::Feature::kLazyImageMips);
   return true;
 }();
 
@@ -474,11 +474,12 @@ ImageDecoderImpeller::UnsafeUploadTextureToPrivate(
     // Remove mip count if we are resizing the image on the GPU.
     texture_descriptor.mip_count = 1;
   }
-  // Reelx P15: an uploaded image keeps its mipmap levels but they are not
+  // EnginePerf P15: an uploaded image keeps its mipmap levels but they are not
   // filled here. The first draw that could read them fills them (see
   // impeller/display_list/lazy_mipmaps.h); an image only ever drawn at its
   // own size or larger, like a decoded video frame, never pays for them.
-  const bool defer_mips = reelx::IsFeatureOn(reelx::Feature::kLazyImageMips);
+  const bool defer_mips =
+      engine_perf::IsFeatureOn(engine_perf::Feature::kLazyImageMips);
   if (defer_mips && resize_info.has_value()) {
     // The resize reads level 0 of this texture and nothing else does.
     texture_descriptor.mip_count = 1;
@@ -584,7 +585,7 @@ ImageDecoderImpeller::UnsafeUploadTextureToPrivate(
   context->DisposeThreadLocalCachedResources();
 
   if (result_texture->HasDeferredMipmaps()) {
-    reelx::CountStat(reelx::Stat::kImageMipsDeferred);
+    engine_perf::CountStat(engine_perf::Stat::kImageMipsDeferred);
   }
   return std::make_pair(
       impeller::DlImageImpeller::Make(std::move(result_texture)),

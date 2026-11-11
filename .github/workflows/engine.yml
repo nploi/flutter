@@ -1,4 +1,4 @@
-# Builds the engine patches on every platform the editor ships, one job each:
+# Builds the engine patches on every platform, one job each:
 #
 #   linux    host_debug_unopt: unit tests (Impeller on OpenGL ES, the Vulkan
 #            mock), exported C functions, artifact engine-folder-linux-x64
@@ -11,7 +11,7 @@
 #   ios      Flutter.xcframework for devices (release, profile): exported C
 #            functions, artifacts Flutter-<mode>.xcframework
 #
-# Artifacts are kept 14 days; reelx/ENGINE_SETUP.md says how to use them.
+# Artifacts are kept 14 days; engine_perf/ENGINE_SETUP.md says how to use them.
 # Runs on pushes to engine-perf/*-wip and pull requests into them that
 # touch the engine (a change can be tried on a phone before it merges), and
 # by hand, for the platforms and phone modes picked:
@@ -29,14 +29,14 @@ on:
       - 'engine/src/flutter/**'
       - 'DEPS'
       - '.github/workflows/engine.yml'
-      - 'reelx/tools/**'
+      - 'engine_perf/tools/**'
   pull_request:
     branches: ['engine-perf/*-wip']
     paths:
       - 'engine/src/flutter/**'
       - 'DEPS'
       - '.github/workflows/engine.yml'
-      - 'reelx/tools/**'
+      - 'engine_perf/tools/**'
   workflow_dispatch:
     inputs:
       linux:
@@ -161,10 +161,10 @@ jobs:
       - name: Exported C functions
         if: steps.build.outcome == 'success'
         run: |
-          want="ReelxEngineInfo ReelxSetFeature ReelxImageReadbackToFd ReelxRepeatLastToFd ReelxReleaseFd ReelxRegisterShaderBytes ReelxUnregisterShaderBytes"
+          want="EnginePerfInfo EnginePerfSetFeature EnginePerfImageReadbackToFd EnginePerfRepeatLastToFd EnginePerfReleaseFd EnginePerfRegisterShaderBytes EnginePerfUnregisterShaderBytes"
           failed=0
           for bin in "$OUT/flutter_tester" "$OUT/libflutter_linux_gtk.so"; do
-            have=$(nm -D --defined-only "$bin" | awk '{print $3}' | grep '^Reelx' | sort | tr '\n' ' ')
+            have=$(nm -D --defined-only "$bin" | awk '{print $3}' | grep '^EnginePerf' | sort | tr '\n' ' ')
             echo "$(basename "$bin"): $have"
             for f in $want; do
               case " $have " in *" $f "*) ;; *) echo "::error::$(basename "$bin") does not export $f"; failed=1 ;; esac
@@ -175,21 +175,20 @@ jobs:
       - name: Engine unit tests
         if: steps.build.outcome == 'success'
         run: |
-          "$OUT/ui_unittests" --gtest_filter='Reelx*:ImageEncodingReelx*'
+          "$OUT/ui_unittests" --gtest_filter='EnginePerf*:ImageEncodingEnginePerf*'
           # Impeller: OpenGL ES playgrounds (Vulkan can't start on this
           # runner), the Vulkan mock and the GLES texture tests.
           xvfb-run -a "$OUT/impeller_unittests" \
-            --gtest_filter='*Reelx*OpenGLES*:Reelx*Test.*:EntityTest.YUV*OpenGLES*:RenderPassVK.*:TextureGLESTest.*'
+            --gtest_filter='*EnginePerf*OpenGLES*:EnginePerf*Test.*:EntityTest.YUV*OpenGLES*:RenderPassVK.*:TextureGLESTest.*'
 
-      # The engine folder (what `flutter test --local-engine` and
-      # `reelx render` take), for Reelx's own CI to test on: it downloads
-      # the latest successful run's artifact.
+      # The engine folder (what `flutter test --local-engine` takes, laid out
+      # as an engine release ships it).
       - name: Engine folder artifact
         id: engine_folder
         if: steps.build.outcome == 'success'
         working-directory: ${{ env.ROOT }}/flutter
         run: |
-          python3 reelx/tools/package_artifacts.py assets --platform linux --part engine-folder \
+          python3 engine_perf/tools/package_artifacts.py assets --platform linux --part engine-folder \
             --out-dir engine/src/out --dest "$ROOT/dist" --tester-dir host_debug_unopt --cpu x64
           ls -la "$ROOT/dist"
 
@@ -201,56 +200,6 @@ jobs:
           path: ${{ env.ROOT }}/dist/engine-folder-linux-x64.zip
           retention-days: 14
 
-      # Paused: Reelx is a private repository, and checking it out here needs
-      # the owner's decision on a token. The engine's own tests above cover
-      # the patches; Reelx's tests on the built engine run elsewhere for now.
-      - name: Flutter ${{ env.FLUTTER_VERSION }} and Reelx
-        if: false
-        run: |
-          git clone --quiet --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$ROOT/sdk"
-          git clone --quiet --depth 1 https://github.com/reelx-dev/reelx.git "$ROOT/reelx"
-          echo "$ROOT/sdk/bin" >> "$GITHUB_PATH"
-
-      - name: Reelx tests on the built engine
-        if: false
-        run: |
-          engine=(--local-engine-src-path="$ROOT/flutter/engine/src" --local-engine=host_debug_unopt --local-engine-host=host_debug_unopt)
-          flutter --version
-          failed=0
-          # Without the engine's functions the Reelx tests take their
-          # stock-engine branch and pass, so first check they are found.
-          cat > "$ROOT/reelx/packages/reelx/test/built_engine_test.dart" <<'EOF'
-          import 'package:flutter_test/flutter_test.dart';
-          import 'package:reelx/reelx.dart';
-          void main() {
-            test('ShaderBytes finds the built engine', () {
-              expect(ShaderBytes.isSupported, isTrue);
-            });
-          }
-          EOF
-          cat > "$ROOT/reelx/packages/reelx_export/test/built_engine_test.dart" <<'EOF'
-          import 'package:flutter_test/flutter_test.dart';
-          import 'package:reelx_export/reelx_export.dart';
-          void main() {
-            test('the engine reports itself with its Linux features', () {
-              final info = ReelxEngine.current.info;
-              expect(info.isStock, isFalse);
-              expect(info.has('oneCopyReadback'), isTrue);
-              expect(info.has('fdHandoff'), isTrue);
-            });
-          }
-          EOF
-          cd "$ROOT/reelx/packages/reelx"
-          flutter pub get > /dev/null
-          flutter test "${engine[@]}" test/built_engine_test.dart test/shaders || failed=1
-          flutter test "${engine[@]}" --enable-impeller test/shaders || failed=1
-          cd "$ROOT/reelx/packages/reelx_export"
-          flutter pub get > /dev/null
-          flutter test "${engine[@]}" test/built_engine_test.dart test/engine || failed=1
-          # The gated export suite on the built engine, Skia then Impeller.
-          flutter test "${engine[@]}" --dart-define=REELX_RUN_EXPORT_TESTS=true || failed=1
-          flutter test "${engine[@]}" --enable-impeller --dart-define=REELX_RUN_EXPORT_TESTS=true || failed=1
-          exit $failed
 
   macos:
     if: >-
@@ -331,10 +280,10 @@ jobs:
       - name: Exported C functions
         if: steps.build.outcome == 'success'
         run: |
-          want="ReelxEngineInfo ReelxSetFeature ReelxImageReadbackToFd ReelxRepeatLastToFd ReelxReleaseFd ReelxRegisterShaderBytes ReelxUnregisterShaderBytes"
+          want="EnginePerfInfo EnginePerfSetFeature EnginePerfImageReadbackToFd EnginePerfRepeatLastToFd EnginePerfReleaseFd EnginePerfRegisterShaderBytes EnginePerfUnregisterShaderBytes"
           failed=0
           for bin in "$OUT/flutter_tester" "$OUT/FlutterMacOS.framework/FlutterMacOS"; do
-            have=$(nm -gU "$bin" | awk '{print $3}' | sed 's/^_//' | grep '^Reelx' | sort | tr '\n' ' ')
+            have=$(nm -gU "$bin" | awk '{print $3}' | sed 's/^_//' | grep '^EnginePerf' | sort | tr '\n' ' ')
             echo "$(basename "$bin"): $have"
             for f in $want; do
               case " $have " in *" $f "*) ;; *) echo "::error::$(basename "$bin") does not export $f"; failed=1 ;; esac
@@ -345,18 +294,17 @@ jobs:
       - name: Engine unit tests
         if: steps.build.outcome == 'success'
         run: |
-          "$OUT/ui_unittests" --gtest_filter='Reelx*:ImageEncodingReelx*'
+          "$OUT/ui_unittests" --gtest_filter='EnginePerf*:ImageEncodingEnginePerf*'
           # Impeller on Metal (the runner's virtual GPU), the Vulkan mock.
-          "$OUT/impeller_unittests" --gtest_filter='*Reelx*Metal*:Reelx*Test.*:EntityTest.YUV*Metal*:RenderPassVK.*'
+          "$OUT/impeller_unittests" --gtest_filter='*EnginePerf*Metal*:EnginePerf*Test.*:EntityTest.YUV*Metal*:RenderPassVK.*'
 
-      # The engine folder (what `flutter test --local-engine` and
-      # `reelx render` take) for Apple silicon Macs.
+      # The engine folder (what `flutter test --local-engine` takes) for Apple silicon Macs.
       - name: Engine folder artifact
         id: engine_folder
         if: steps.build.outcome == 'success'
         working-directory: ${{ env.ROOT }}/flutter
         run: |
-          python3 reelx/tools/package_artifacts.py assets --platform macos --part engine-folder \
+          python3 engine_perf/tools/package_artifacts.py assets --platform macos --part engine-folder \
             --out-dir engine/src/out --dest "$ROOT/dist" --tester-dir "$ENGINE_NAME" --cpu arm64
           ls -la "$ROOT/dist"
 
@@ -368,58 +316,6 @@ jobs:
           path: ${{ env.ROOT }}/dist/engine-folder-macos-arm64.zip
           retention-days: 14
 
-      # Paused: Reelx is a private repository, and checking it out here needs
-      # the owner's decision on a token. The engine's own tests above cover
-      # the patches; Reelx's tests on the built engine run elsewhere for now.
-      - name: Flutter ${{ env.FLUTTER_VERSION }} and Reelx
-        if: false
-        run: |
-          git clone --quiet --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$ROOT/sdk"
-          git clone --quiet --depth 1 https://github.com/reelx-dev/reelx.git "$ROOT/reelx"
-          echo "$ROOT/sdk/bin" >> "$GITHUB_PATH"
-
-      - name: Reelx tests on the built engine
-        if: false
-        run: |
-          engine=(--local-engine-src-path="$ROOT/flutter/engine/src" --local-engine="$ENGINE_NAME" --local-engine-host="$ENGINE_NAME")
-          flutter --version
-          failed=0
-          # Without the engine's functions the Reelx tests take their
-          # stock-engine branch and pass, so first check they are found.
-          cat > "$ROOT/reelx/packages/reelx/test/built_engine_test.dart" <<'EOF'
-          import 'package:flutter_test/flutter_test.dart';
-          import 'package:reelx/reelx.dart';
-          void main() {
-            test('ShaderBytes finds the built engine', () {
-              expect(ShaderBytes.isSupported, isTrue);
-            });
-          }
-          EOF
-          cat > "$ROOT/reelx/packages/reelx_export/test/built_engine_test.dart" <<'EOF'
-          import 'package:flutter_test/flutter_test.dart';
-          import 'package:reelx_export/reelx_export.dart';
-          void main() {
-            test('the engine reports itself with its macOS features', () {
-              final info = ReelxEngine.current.info;
-              expect(info.isStock, isFalse);
-              expect(info.has('oneCopyReadback'), isTrue);
-              expect(info.has('fdHandoff'), isTrue);
-              expect(info.has('testerMetal'), isTrue);
-            });
-          }
-          EOF
-          cd "$ROOT/reelx/packages/reelx"
-          flutter pub get > /dev/null
-          flutter test "${engine[@]}" test/built_engine_test.dart test/shaders || failed=1
-          # P6: with --enable-impeller the tester renders with Metal.
-          flutter test "${engine[@]}" --enable-impeller test/shaders || failed=1
-          cd "$ROOT/reelx/packages/reelx_export"
-          flutter pub get > /dev/null
-          flutter test "${engine[@]}" test/built_engine_test.dart test/engine || failed=1
-          # The gated export suite on the built engine, Skia then Metal.
-          flutter test "${engine[@]}" --dart-define=REELX_RUN_EXPORT_TESTS=true || failed=1
-          flutter test "${engine[@]}" --enable-impeller --dart-define=REELX_RUN_EXPORT_TESTS=true || failed=1
-          exit $failed
 
   windows:
     if: >-
@@ -510,11 +406,11 @@ jobs:
         working-directory: ${{ env.ROOT }}\flutter\engine\src
         run: |
           $readobj = "flutter\buildtools\windows-x64\clang\bin\llvm-readobj.exe"
-          $want = 'ReelxEngineInfo','ReelxSetFeature','ReelxImageReadbackToFd','ReelxRepeatLastToFd',
-                  'ReelxReleaseFd','ReelxRegisterShaderBytes','ReelxUnregisterShaderBytes'
+          $want = 'EnginePerfInfo','EnginePerfSetFeature','EnginePerfImageReadbackToFd','EnginePerfRepeatLastToFd',
+                  'EnginePerfReleaseFd','EnginePerfRegisterShaderBytes','EnginePerfUnregisterShaderBytes'
           $failed = $false
           foreach ($bin in 'out\host_debug_unopt\flutter_windows.dll', 'out\host_debug_unopt\flutter_tester.exe') {
-            $exports = & $readobj --coff-exports $bin | Select-String 'Name: (Reelx\w+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+            $exports = & $readobj --coff-exports $bin | Select-String 'Name: (EnginePerf\w+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }
             $missing = $want | Where-Object { $exports -notcontains $_ }
             Write-Host "$bin exports: $($exports -join ', ')"
             if ($missing) { Write-Host "::error::$bin is missing $($missing -join ', ')"; $failed = $true }
@@ -524,17 +420,16 @@ jobs:
       - name: Engine unit tests
         working-directory: ${{ env.ROOT }}\flutter\engine\src
         run: |
-          out\host_debug_unopt\ui_unittests.exe --gtest_filter="Reelx*:ImageEncodingReelx*"
+          out\host_debug_unopt\ui_unittests.exe --gtest_filter="EnginePerf*:ImageEncodingEnginePerf*"
           exit $LASTEXITCODE
 
-      # The engine folder (what `flutter test --local-engine` and
-      # `reelx render` take) for Windows.
+      # The engine folder (what `flutter test --local-engine` takes) for Windows.
       - name: Engine folder artifact
         id: engine_folder
         if: steps.build.outcome == 'success'
         working-directory: ${{ env.ROOT }}\flutter
         run: |
-          python reelx\tools\package_artifacts.py assets --platform windows --part engine-folder `
+          python engine_perf\tools\package_artifacts.py assets --platform windows --part engine-folder `
             --out-dir engine\src\out --dest "$env:ROOT\dist" --tester-dir host_debug_unopt --cpu x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem "$env:ROOT\dist"
@@ -547,61 +442,6 @@ jobs:
           path: ${{ env.ROOT }}\dist\engine-folder-windows-x64.zip
           retention-days: 14
 
-      # Paused: Reelx is a private repository, and checking it out here needs
-      # the owner's decision on a token. The engine's own tests above cover
-      # the patches; Reelx's tests on the built engine run elsewhere for now.
-      - name: Flutter ${{ env.FLUTTER_VERSION }} and Reelx
-        if: false
-        run: |
-          git clone --quiet --depth 1 --branch "$env:FLUTTER_VERSION" https://github.com/flutter/flutter.git "$env:ROOT\sdk"
-          git clone --quiet --depth 1 https://github.com/reelx-dev/reelx.git "$env:ROOT\reelx"
-          "$env:ROOT\sdk\bin" >> $env:GITHUB_PATH
-
-      - name: Reelx tests on the built engine
-        if: false
-        run: |
-          $engine = "--local-engine-src-path=$env:ROOT\flutter\engine\src", '--local-engine=host_debug_unopt', '--local-engine-host=host_debug_unopt'
-          flutter --version
-          $failed = $false
-          # Without the engine's functions the Reelx tests below take their
-          # stock-engine branch and pass, so first check they are found.
-          @'
-          import 'package:flutter_test/flutter_test.dart';
-          import 'package:reelx/reelx.dart';
-          void main() {
-            test('ShaderBytes finds the built engine', () {
-              expect(ShaderBytes.isSupported, isTrue);
-            });
-          }
-          '@ | Set-Content "$env:ROOT\reelx\packages\reelx\test\built_engine_test.dart"
-          @'
-          import 'package:flutter_test/flutter_test.dart';
-          import 'package:reelx_export/reelx_export.dart';
-          void main() {
-            test('the engine reports itself; no fd hand-off on Windows', () {
-              final info = ReelxEngine.current.info;
-              expect(info.isStock, isFalse);
-              expect(info.has('fdHandoff'), isFalse);
-              expect(info.has('oneCopyReadback'), isTrue);
-            });
-          }
-          '@ | Set-Content "$env:ROOT\reelx\packages\reelx_export\test\built_engine_test.dart"
-          Push-Location "$env:ROOT\reelx\packages\reelx"
-          flutter pub get | Out-Null
-          flutter test @engine test\built_engine_test.dart
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          # ShaderBytes must load a shader from bytes and draw with it.
-          flutter test @engine test\shaders\shader_bytes_test.dart
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          Pop-Location
-          Push-Location "$env:ROOT\reelx\packages\reelx_export"
-          flutter pub get | Out-Null
-          flutter test @engine test\built_engine_test.dart
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          flutter test @engine test\engine\engine_extensions_test.dart
-          if ($LASTEXITCODE -ne 0) { $failed = $true }
-          Pop-Location
-          if ($failed) { exit 1 }
 
   android:
     if: >-
@@ -666,7 +506,7 @@ jobs:
 
       - name: Build identity
         working-directory: ${{ env.ROOT }}/flutter
-        run: REELX_FLUTTER_VERSION="$FLUTTER_VERSION" reelx/tools/write_build_info.sh dev
+        run: ENGINE_PERF_FLUTTER_VERSION="$FLUTTER_VERSION" engine_perf/tools/write_build_info.sh dev
 
       - name: Build (android_${{ matrix.mode }}_arm64)
         id: build
@@ -684,11 +524,11 @@ jobs:
         if: steps.build.outcome == 'success'
         working-directory: ${{ env.ROOT }}/flutter
         run: |
-          want="ReelxEngineInfo ReelxSetFeature ReelxImageReadbackToFd ReelxRepeatLastToFd ReelxReleaseFd ReelxRegisterShaderBytes ReelxUnregisterShaderBytes"
+          want="EnginePerfInfo EnginePerfSetFeature EnginePerfImageReadbackToFd EnginePerfRepeatLastToFd EnginePerfReleaseFd EnginePerfRegisterShaderBytes EnginePerfUnregisterShaderBytes"
           bin="$OUT/lib.stripped/libflutter.so"
           tools=engine/src/flutter/buildtools/linux-x64/clang/bin
           "$tools/llvm-readelf" -h "$bin" | grep -E 'Class|Machine'
-          have=$("$tools/llvm-nm" -D --defined-only "$bin" | awk '{print $3}' | grep '^Reelx' | sort | tr '\n' ' ')
+          have=$("$tools/llvm-nm" -D --defined-only "$bin" | awk '{print $3}' | grep '^EnginePerf' | sort | tr '\n' ' ')
           echo "libflutter.so: $have"
           failed=0
           for f in $want; do
@@ -699,7 +539,7 @@ jobs:
       - name: Package
         working-directory: ${{ env.ROOT }}/flutter
         run: |
-          python3 reelx/tools/package_artifacts.py assets --platform android --part app \
+          python3 engine_perf/tools/package_artifacts.py assets --platform android --part app \
             --out-dir engine/src/out --dest "$ROOT/dist" --cpu arm64
           ls -la "$ROOT/dist"
 
@@ -767,7 +607,7 @@ jobs:
 
       - name: Build identity
         working-directory: ${{ env.ROOT }}/flutter
-        run: REELX_FLUTTER_VERSION="$FLUTTER_VERSION" reelx/tools/write_build_info.sh dev
+        run: ENGINE_PERF_FLUTTER_VERSION="$FLUTTER_VERSION" engine_perf/tools/write_build_info.sh dev
 
       - name: Build (ios_${{ matrix.mode }})
         id: build
@@ -783,11 +623,11 @@ jobs:
       - name: Exported C functions
         if: steps.build.outcome == 'success'
         run: |
-          want="ReelxEngineInfo ReelxSetFeature ReelxImageReadbackToFd ReelxRepeatLastToFd ReelxReleaseFd ReelxRegisterShaderBytes ReelxUnregisterShaderBytes"
+          want="EnginePerfInfo EnginePerfSetFeature EnginePerfImageReadbackToFd EnginePerfRepeatLastToFd EnginePerfReleaseFd EnginePerfRegisterShaderBytes EnginePerfUnregisterShaderBytes"
           bin=$(find "$OUT/Flutter.xcframework" -path '*/Flutter.framework/Flutter' -type f | head -1)
           [ -n "$bin" ] || { echo "::error::no Flutter.framework in the xcframework"; exit 1; }
           lipo -info "$bin"
-          have=$(nm -gU "$bin" | awk '{print $3}' | sed 's/^_//' | grep '^Reelx' | sort | tr '\n' ' ')
+          have=$(nm -gU "$bin" | awk '{print $3}' | sed 's/^_//' | grep '^EnginePerf' | sort | tr '\n' ' ')
           echo "Flutter: $have"
           failed=0
           for f in $want; do
@@ -798,7 +638,7 @@ jobs:
       - name: Package
         working-directory: ${{ env.ROOT }}/flutter
         run: |
-          python3 reelx/tools/package_artifacts.py assets --platform ios --part app \
+          python3 engine_perf/tools/package_artifacts.py assets --platform ios --part app \
             --out-dir engine/src/out --dest "$ROOT/dist" --cpu arm64
           ls -la "$ROOT/dist"
 

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Reelx P1 (lazy mipmaps), P3 (lossless snapshot targets) and P13 (snapshot
-// host buffers).
+// EnginePerf P1 (lazy mipmaps), P3 (lossless snapshot targets) and P13
+// (snapshot host buffers).
 
 #include <algorithm>
 #include <cstring>
@@ -211,7 +211,7 @@ int MaxDifference(const std::vector<uint8_t>& a,
 
 }  // namespace
 
-TEST_P(AiksTest, ReelxSnapshotWithoutMipsHasOneLevel) {
+TEST_P(AiksTest, EnginePerfSnapshotWithoutMipsHasOneLevel) {
   AiksContext renderer(GetContext(), nullptr);
   auto eager = DisplayListToTexture(TwoRects(), {256, 256}, renderer,
                                     /*reset_host_buffer=*/true,
@@ -225,7 +225,7 @@ TEST_P(AiksTest, ReelxSnapshotWithoutMipsHasOneLevel) {
   EXPECT_EQ(lazy->GetMipCount(), 1u);
 }
 
-TEST_P(AiksTest, ReelxLazyMipmapsOnlyForMipmapSampling) {
+TEST_P(AiksTest, EnginePerfLazyMipmapsOnlyForMipmapSampling) {
   AiksContext renderer(GetContext(), nullptr);
   auto texture = DisplayListToTexture(TwoRects(), {256, 256}, renderer,
                                       /*reset_host_buffer=*/true,
@@ -256,7 +256,7 @@ TEST_P(AiksTest, ReelxLazyMipmapsOnlyForMipmapSampling) {
             mipmapped);
 }
 
-TEST_P(AiksTest, ReelxLazyMipmapsNotForOneLevelSizes) {
+TEST_P(AiksTest, EnginePerfLazyMipmapsNotForOneLevelSizes) {
   AiksContext renderer(GetContext(), nullptr);
   auto texture = DisplayListToTexture(TwoRects(), {1, 1}, renderer,
                                       /*reset_host_buffer=*/true,
@@ -269,7 +269,7 @@ TEST_P(AiksTest, ReelxLazyMipmapsNotForOneLevelSizes) {
             texture);
 }
 
-TEST_P(AiksTest, ReelxLosslessSnapshotTarget) {
+TEST_P(AiksTest, EnginePerfLosslessSnapshotTarget) {
   AiksContext renderer(GetContext(), nullptr);
   auto texture = DisplayListToTexture(TwoRects(), {256, 256}, renderer,
                                       /*reset_host_buffer=*/true,
@@ -281,7 +281,7 @@ TEST_P(AiksTest, ReelxLosslessSnapshotTarget) {
             CompressionType::kLossless);
 }
 
-TEST_P(AiksTest, ReelxPooledTargetIsReusedOnceReleased) {
+TEST_P(AiksTest, EnginePerfPooledTargetIsReusedOnceReleased) {
   AiksContext renderer(GetContext(), nullptr);
   auto snapshot = [&](bool* hit) {
     return DisplayListToTexture(TwoRects(), {256, 256}, renderer,
@@ -313,7 +313,7 @@ TEST_P(AiksTest, ReelxPooledTargetIsReusedOnceReleased) {
 }
 
 // A reused target draws the new snapshot exactly as a fresh one does.
-TEST_P(AiksTest, ReelxReusedTargetDrawsLikeAFreshOne) {
+TEST_P(AiksTest, EnginePerfReusedTargetDrawsLikeAFreshOne) {
   AiksContext renderer(GetContext(), nullptr);
   auto snapshot = [&](const sk_sp<flutter::DisplayList>& list, bool pooled,
                       bool* hit) {
@@ -339,7 +339,7 @@ TEST_P(AiksTest, ReelxReusedTargetDrawsLikeAFreshOne) {
             0);
 }
 
-TEST_P(AiksTest, ReelxMipmappedTargetsAreNotPooled) {
+TEST_P(AiksTest, EnginePerfMipmappedTargetsAreNotPooled) {
   AiksContext renderer(GetContext(), nullptr);
   bool hit = true;
   auto texture = DisplayListToTexture(TwoRects(), {256, 256}, renderer,
@@ -359,7 +359,7 @@ TEST_P(AiksTest, ReelxMipmappedTargetsAreNotPooled) {
 // paravirtual GPU) such a snapshot's base level differs from the same display
 // list rendered without mipmaps (by 255, at the left edge), which isn't P1's
 // doing.
-TEST_P(AiksTest, ReelxLazyMipmapsDrawLikeGeneratedOnes) {
+TEST_P(AiksTest, EnginePerfLazyMipmapsDrawLikeGeneratedOnes) {
   AiksContext renderer(GetContext(), nullptr);
   auto lazy = DisplayListToTexture(Stripes(), {256, 256}, renderer,
                                    /*reset_host_buffer=*/true,
@@ -398,7 +398,7 @@ TEST_P(AiksTest, ReelxLazyMipmapsDrawLikeGeneratedOnes) {
 // P13: snapshots that draw with host buffers of their own reset them, so
 // what they emplace doesn't pile up; the frames' buffers aren't touched, and
 // the pixels are those of a snapshot drawn with the frames' buffers.
-TEST_P(AiksTest, ReelxSnapshotsResetHostBuffersOfTheirOwn) {
+TEST_P(AiksTest, EnginePerfSnapshotsResetHostBuffersOfTheirOwn) {
   AiksContext renderer(GetContext(), nullptr);
   ContentContext& content = renderer.GetContentContext();
   auto snapshot = [&](bool own_buffers, bool* reset) {
@@ -463,7 +463,7 @@ TEST_P(AiksTest, ReelxSnapshotsResetHostBuffersOfTheirOwn) {
 // P14: snapshots of one size draw with one MSAA colour and one depth/stencil
 // texture, whether their own target is new or reused, and give the pixels of
 // snapshots that made their own.
-TEST_P(AiksTest, ReelxSnapshotsShareAttachments) {
+TEST_P(AiksTest, EnginePerfSnapshotsShareAttachments) {
   AiksContext renderer(GetContext(), nullptr);
   const SnapshotTargetPool& pool =
       renderer.GetContentContext().GetSnapshotTargetPool();
@@ -551,7 +551,7 @@ TEST_P(AiksTest, ReelxSnapshotsShareAttachments) {
 
 // P14: the pool keeps the attachments of the two sizes used last. A target
 // reused after its size's attachments were replaced draws with the new ones.
-TEST_P(AiksTest, ReelxAttachmentsFollowTheSnapshotSize) {
+TEST_P(AiksTest, EnginePerfAttachmentsFollowTheSnapshotSize) {
   AiksContext renderer(GetContext(), nullptr);
   const SnapshotTargetPool& pool =
       renderer.GetContentContext().GetSnapshotTargetPool();
@@ -610,7 +610,7 @@ TEST_P(AiksTest, ReelxAttachmentsFollowTheSnapshotSize) {
 
 // P14: after enough onscreen frames without a snapshot the pool holds only
 // what something else holds too.
-TEST_P(AiksTest, ReelxIdleSnapshotPoolLetsGo) {
+TEST_P(AiksTest, EnginePerfIdleSnapshotPoolLetsGo) {
   AiksContext renderer(GetContext(), nullptr);
   ContentContext& content = renderer.GetContentContext();
   const SnapshotTargetPool& pool = content.GetSnapshotTargetPool();
@@ -661,7 +661,7 @@ TEST_P(AiksTest, ReelxIdleSnapshotPoolLetsGo) {
 // P15: an uploaded image whose mipmaps were left unfilled draws exactly like
 // one that has them when the draw can only read level 0, and nothing fills
 // them.
-TEST_P(AiksTest, ReelxDeferredMipmapsStayUnfilledForLevelZeroDraws) {
+TEST_P(AiksTest, EnginePerfDeferredMipmapsStayUnfilledForLevelZeroDraws) {
   AiksContext renderer(GetContext(), nullptr);
   auto source = DisplayListToTexture(Stripes(), {256, 256}, renderer);
   ASSERT_TRUE(source);
@@ -714,7 +714,7 @@ TEST_P(AiksTest, ReelxDeferredMipmapsStayUnfilledForLevelZeroDraws) {
 
 // P15: the first draw that can read the mipmaps fills them, once, and draws
 // what a stock upload draws.
-TEST_P(AiksTest, ReelxDeferredMipmapsFillForMinifiedDraws) {
+TEST_P(AiksTest, EnginePerfDeferredMipmapsFillForMinifiedDraws) {
   AiksContext renderer(GetContext(), nullptr);
   auto source = DisplayListToTexture(Stripes(), {256, 256}, renderer);
   ASSERT_TRUE(source);
@@ -746,7 +746,7 @@ TEST_P(AiksTest, ReelxDeferredMipmapsFillForMinifiedDraws) {
 
 // P15: every draw that isn't a plain, unrotated image rectangle gets the
 // mipmaps a stock upload has, whether or not it ends up reading them.
-TEST_P(AiksTest, ReelxDeferredMipmapsFillForOtherDraws) {
+TEST_P(AiksTest, EnginePerfDeferredMipmapsFillForOtherDraws) {
   AiksContext renderer(GetContext(), nullptr);
   auto source = DisplayListToTexture(Stripes(), {256, 256}, renderer);
   ASSERT_TRUE(source);
@@ -850,7 +850,7 @@ TEST_P(AiksTest, ReelxDeferredMipmapsFillForOtherDraws) {
 
 // P15, for P1's snapshots: a snapshot made without mipmaps and drawn at its
 // own size with mipmap sampling doesn't get the mipmapped copy either.
-TEST_P(AiksTest, ReelxLazySnapshotDrawnAtItsSizeMakesNoCopy) {
+TEST_P(AiksTest, EnginePerfLazySnapshotDrawnAtItsSizeMakesNoCopy) {
   AiksContext renderer(GetContext(), nullptr);
   auto lazy = DisplayListToTexture(Stripes(), {256, 256}, renderer,
                                    /*reset_host_buffer=*/true,
@@ -871,7 +871,7 @@ TEST_P(AiksTest, ReelxLazySnapshotDrawnAtItsSizeMakesNoCopy) {
   EXPECT_NE(lazy->GetLazyMipmapped(), nullptr);
 }
 
-// Reelx P14: a context whose MSAA resolves explicitly or, like OpenGL
+// EnginePerf P14: a context whose MSAA resolves explicitly or, like OpenGL
 // ES with EXT_multisampled_render_to_texture, implicitly, and an allocator
 // that records the textures it makes.
 class SnapshotTargetContext {
@@ -935,7 +935,7 @@ std::shared_ptr<Texture> DepthStencilOf(const RenderTarget& target) {
              : nullptr;
 }
 
-TEST(ReelxSnapshotTargetTest, ImplicitMsaaPoolsTheSnapshotItself) {
+TEST(EnginePerfSnapshotTargetTest, ImplicitMsaaPoolsTheSnapshotItself) {
   SnapshotTargetContext context(/*implicit_msaa=*/true);
   SnapshotTargetPool pool;
   bool pool_hit = false;
@@ -990,7 +990,8 @@ TEST(ReelxSnapshotTargetTest, ImplicitMsaaPoolsTheSnapshotItself) {
   EXPECT_EQ(context.made.size(), 3u);
 }
 
-TEST(ReelxSnapshotTargetTest, ExplicitMsaaPoolsTheResolveAndTheAttachments) {
+TEST(EnginePerfSnapshotTargetTest,
+     ExplicitMsaaPoolsTheResolveAndTheAttachments) {
   SnapshotTargetContext context(/*implicit_msaa=*/false);
   SnapshotTargetPool pool;
   bool pool_hit = false;
@@ -1017,7 +1018,7 @@ TEST(ReelxSnapshotTargetTest, ExplicitMsaaPoolsTheResolveAndTheAttachments) {
   EXPECT_EQ(context.made.size(), 3u);
 }
 
-TEST(ReelxLazyMipmapsTest, ImageRectNeverMinifies) {
+TEST(EnginePerfLazyMipmapsTest, ImageRectNeverMinifies) {
   const Rect source = Rect::MakeXYWH(10, 20, 200, 100);
   // The image's own size, larger, and larger through the canvas.
   EXPECT_TRUE(
@@ -1048,7 +1049,7 @@ TEST(ReelxLazyMipmapsTest, ImageRectNeverMinifies) {
   EXPECT_FALSE(ImageRectNeverMinifies(Matrix(), source, Rect()));
 }
 
-TEST(ReelxSingleSampleTest, PixelAlignedFills) {
+TEST(EnginePerfSingleSampleTest, PixelAlignedFills) {
   using flutter::DisplayListBuilder;
   using flutter::DlPaint;
   using flutter::DlRect;
@@ -1137,7 +1138,7 @@ TEST(ReelxSingleSampleTest, PixelAlignedFills) {
 // P16: a list of fills on pixel boundaries renders to the same bytes with
 // one sample per pixel as with MSAA, and a single-sample snapshot leaves the
 // MSAA snapshots' pooled attachments alone.
-TEST_P(AiksTest, ReelxSingleSampleSnapshotsDrawLikeMultisampled) {
+TEST_P(AiksTest, EnginePerfSingleSampleSnapshotsDrawLikeMultisampled) {
   AiksContext renderer(GetContext(), nullptr);
   const SnapshotTargetPool& pool =
       renderer.GetContentContext().GetSnapshotTargetPool();

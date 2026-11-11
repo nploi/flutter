@@ -12,7 +12,7 @@
 #include "flutter/impeller/display_list/dl_dispatcher.h"
 #include "flutter/impeller/display_list/dl_image_impeller.h"
 #include "flutter/impeller/geometry/size.h"
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 #include "flutter/shell/common/snapshot_controller.h"
 #include "impeller/entity/contents/runtime_effect_contents.h"
 
@@ -20,16 +20,16 @@ namespace flutter {
 
 namespace {
 
-// Reelx P1 (lazyMips), P2a (targetPool), P3 (exactSnapshots), P13
+// EnginePerf P1 (lazyMips), P2a (targetPool), P3 (exactSnapshots), P13
 // (snapshotBuffers) and P14 (targetAttachments) live in this file's
 // snapshots.
-[[maybe_unused]] const bool kReelxSnapshotFeatures = [] {
-  reelx::SetAvailable(reelx::Feature::kLazyMips);
-  reelx::SetAvailable(reelx::Feature::kTargetPool);
-  reelx::SetAvailable(reelx::Feature::kExactSnapshots);
-  reelx::SetAvailable(reelx::Feature::kSnapshotBuffers);
-  reelx::SetAvailable(reelx::Feature::kTargetAttachments);
-  reelx::SetAvailable(reelx::Feature::kSingleSampleSnapshots);
+[[maybe_unused]] const bool kEnginePerfSnapshotFeatures = [] {
+  engine_perf::SetAvailable(engine_perf::Feature::kLazyMips);
+  engine_perf::SetAvailable(engine_perf::Feature::kTargetPool);
+  engine_perf::SetAvailable(engine_perf::Feature::kExactSnapshots);
+  engine_perf::SetAvailable(engine_perf::Feature::kSnapshotBuffers);
+  engine_perf::SetAvailable(engine_perf::Feature::kTargetAttachments);
+  engine_perf::SetAvailable(engine_perf::Feature::kSingleSampleSnapshots);
   return true;
 }();
 
@@ -90,17 +90,20 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
   // With singleSampleSnapshots a picture of fills on pixel boundaries only
   // (a shader drawn over the whole snapshot, as a pixel-format conversion
   // does) is drawn without MSAA: no pixel would change with it.
-  const bool lazy_mips = reelx::IsFeatureOn(reelx::Feature::kLazyMips);
+  const bool lazy_mips =
+      engine_perf::IsFeatureOn(engine_perf::Feature::kLazyMips);
   const bool pooled =
-      lazy_mips && reelx::IsFeatureOn(reelx::Feature::kTargetPool);
-  const bool own_buffers = reelx::IsFeatureOn(reelx::Feature::kSnapshotBuffers);
+      lazy_mips && engine_perf::IsFeatureOn(engine_perf::Feature::kTargetPool);
+  const bool own_buffers =
+      engine_perf::IsFeatureOn(engine_perf::Feature::kSnapshotBuffers);
   const bool pooled_attachments =
-      pooled && reelx::IsFeatureOn(reelx::Feature::kTargetAttachments);
+      pooled &&
+      engine_perf::IsFeatureOn(engine_perf::Feature::kTargetAttachments);
   bool pool_hit = false;
   bool buffers_reset = false;
   bool attachments_hit = false;
   const bool single_sample =
-      reelx::IsFeatureOn(reelx::Feature::kSingleSampleSnapshots) &&
+      engine_perf::IsFeatureOn(engine_perf::Feature::kSingleSampleSnapshots) &&
       render_target_size == impeller::ISize(size.width, size.height) &&
       impeller::DrawsOnlyPixelAlignedFills(*display_list);
   std::shared_ptr<impeller::Texture> texture = impeller::DisplayListToTexture(
@@ -108,25 +111,27 @@ std::shared_ptr<impeller::Texture> DoMakeRasterSnapshot(
       /*reset_host_buffer=*/false,
       /*generate_mips=*/!lazy_mips, impeller_pixel_format,
       /*lossless_target=*/
-      reelx::IsFeatureOn(reelx::Feature::kExactSnapshots),
+      engine_perf::IsFeatureOn(engine_perf::Feature::kExactSnapshots),
       /*pooled_target=*/pooled, &pool_hit,
       /*snapshot_host_buffers=*/own_buffers, &buffers_reset,
       /*pooled_attachments=*/pooled_attachments, &attachments_hit,
       /*single_sample=*/single_sample);
   if (texture && single_sample) {
-    reelx::CountStat(reelx::Stat::kSingleSampleSnapshots);
+    engine_perf::CountStat(engine_perf::Stat::kSingleSampleSnapshots);
   }
   if (texture && pooled_attachments && !single_sample) {
-    reelx::CountStat(attachments_hit ? reelx::Stat::kTargetAttachmentHits
-                                     : reelx::Stat::kTargetAttachmentMisses);
+    engine_perf::CountStat(attachments_hit
+                               ? engine_perf::Stat::kTargetAttachmentHits
+                               : engine_perf::Stat::kTargetAttachmentMisses);
   }
   if (texture && own_buffers) {
-    reelx::CountStat(buffers_reset ? reelx::Stat::kSnapshotBufferResets
-                                   : reelx::Stat::kSnapshotBufferHolds);
+    engine_perf::CountStat(buffers_reset
+                               ? engine_perf::Stat::kSnapshotBufferResets
+                               : engine_perf::Stat::kSnapshotBufferHolds);
   }
   if (texture && pooled) {
-    reelx::CountStat(pool_hit ? reelx::Stat::kTargetPoolHits
-                              : reelx::Stat::kTargetPoolMisses);
+    engine_perf::CountStat(pool_hit ? engine_perf::Stat::kTargetPoolHits
+                                    : engine_perf::Stat::kTargetPoolMisses);
   }
   if (texture && lazy_mips) {
     texture->SetWantsLazyMipmaps(true);

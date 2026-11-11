@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 
 #if !defined(_WIN32)
 #include <unistd.h>
@@ -13,25 +13,25 @@
 #include "gtest/gtest.h"
 
 namespace flutter {
-namespace reelx {
+namespace engine_perf {
 namespace testing {
 
 namespace {
 
 // Restores every flag after a test so tests stay independent.
-class ReelxFfiTest : public ::testing::Test {
+class EnginePerfFfiTest : public ::testing::Test {
  protected:
   void SetUp() override { ResetFeaturesForTesting(); }
   void TearDown() override { ResetFeaturesForTesting(); }
 };
 
 std::string Info() {
-  return std::string(ReelxEngineInfo());
+  return std::string(EnginePerfInfo());
 }
 
 }  // namespace
 
-TEST_F(ReelxFfiTest, InfoHasTheContractKeys) {
+TEST_F(EnginePerfFfiTest, InfoHasTheContractKeys) {
   std::string info = Info();
   for (const char* key :
        {"\"flutter\":", "\"engineRevision\":", "\"patchSet\":",
@@ -49,32 +49,32 @@ TEST_F(ReelxFfiTest, InfoHasTheContractKeys) {
   EXPECT_EQ(info.back(), '}');
 }
 
-TEST_F(ReelxFfiTest, UnknownFeatureIsRejected) {
-  EXPECT_EQ(ReelxSetFeature("noSuchFeature", 1), -1);
-  EXPECT_EQ(ReelxSetFeature(nullptr, 1), -1);
+TEST_F(EnginePerfFfiTest, UnknownFeatureIsRejected) {
+  EXPECT_EQ(EnginePerfSetFeature("noSuchFeature", 1), -1);
+  EXPECT_EQ(EnginePerfSetFeature(nullptr, 1), -1);
 }
 
-TEST_F(ReelxFfiTest, FeatureNotInThisBuildStaysOff) {
+TEST_F(EnginePerfFfiTest, FeatureNotInThisBuildStaysOff) {
   SetAvailableForTesting(Feature::kLazyMips, false);
-  EXPECT_EQ(ReelxSetFeature("lazyMips", 1), -2);
+  EXPECT_EQ(EnginePerfSetFeature("lazyMips", 1), -2);
   EXPECT_FALSE(IsFeatureOn(Feature::kLazyMips));
   EXPECT_NE(Info().find("\"lazyMips\":false"), std::string::npos);
 }
 
-TEST_F(ReelxFfiTest, AvailableFeatureCanBeSwitched) {
+TEST_F(EnginePerfFfiTest, AvailableFeatureCanBeSwitched) {
   SetAvailableForTesting(Feature::kTargetPool, true);
   EXPECT_TRUE(IsFeatureOn(Feature::kTargetPool));  // on by default
   EXPECT_NE(Info().find("\"targetPool\":true"), std::string::npos);
 
-  EXPECT_EQ(ReelxSetFeature("targetPool", 0), 0);
+  EXPECT_EQ(EnginePerfSetFeature("targetPool", 0), 0);
   EXPECT_FALSE(IsFeatureOn(Feature::kTargetPool));
   EXPECT_NE(Info().find("\"targetPool\":false"), std::string::npos);
 
-  EXPECT_EQ(ReelxSetFeature("targetPool", 1), 0);
+  EXPECT_EQ(EnginePerfSetFeature("targetPool", 1), 0);
   EXPECT_TRUE(IsFeatureOn(Feature::kTargetPool));
 }
 
-TEST_F(ReelxFfiTest, StatsAreCountedAndReported) {
+TEST_F(EnginePerfFfiTest, StatsAreCountedAndReported) {
   CountStat(Stat::kTargetPoolHits);
   CountStat(Stat::kTargetPoolHits);
   CountStat(Stat::kReadbackPoolMisses);
@@ -85,29 +85,29 @@ TEST_F(ReelxFfiTest, StatsAreCountedAndReported) {
 }
 
 // P4: what the hand-off decides before any image or Dart port is involved
-// (the readback path is covered by Reelx's gated export suite on the
-// patched engine).
+// (the readback path is covered by end-to-end tests on the patched
+// engine).
 #if !defined(_WIN32)
-TEST_F(ReelxFfiTest, HandoffRepeatNeedsAFrameFirst) {
+TEST_F(EnginePerfFfiTest, HandoffRepeatNeedsAFrameFirst) {
   SetAvailableForTesting(Feature::kFdHandoff, true);
   int fds[2];
   ASSERT_EQ(pipe(fds), 0);
-  EXPECT_EQ(ReelxRepeatLastToFd(fds[1], /*port=*/0, /*token=*/1), -4);
-  EXPECT_EQ(ReelxReleaseFd(fds[1]), 0);
+  EXPECT_EQ(EnginePerfRepeatLastToFd(fds[1], /*port=*/0, /*token=*/1), -4);
+  EXPECT_EQ(EnginePerfReleaseFd(fds[1]), 0);
   close(fds[0]);
   close(fds[1]);
 }
 
-TEST_F(ReelxFfiTest, HandoffIsRefusedWhileTheFeatureIsOff) {
+TEST_F(EnginePerfFfiTest, HandoffIsRefusedWhileTheFeatureIsOff) {
   SetAvailableForTesting(Feature::kFdHandoff, false);
-  EXPECT_EQ(ReelxRepeatLastToFd(3, /*port=*/0, /*token=*/1), -1);
+  EXPECT_EQ(EnginePerfRepeatLastToFd(3, /*port=*/0, /*token=*/1), -1);
 }
 
-TEST_F(ReelxFfiTest, ReleasingAnUnknownDescriptorIsFine) {
-  EXPECT_EQ(ReelxReleaseFd(12345), 0);
+TEST_F(EnginePerfFfiTest, ReleasingAnUnknownDescriptorIsFine) {
+  EXPECT_EQ(EnginePerfReleaseFd(12345), 0);
 }
 #endif  // !defined(_WIN32)
 
 }  // namespace testing
-}  // namespace reelx
+}  // namespace engine_perf
 }  // namespace flutter

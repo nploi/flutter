@@ -14,8 +14,8 @@
 #include "flutter/fml/make_copyable.h"
 #include "flutter/fml/status_or.h"
 #include "flutter/fml/trace_event.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 #include "flutter/lib/ui/painting/image.h"
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
 #include "fml/status.h"
 #if IMPELLER_SUPPORTS_RENDERING
 #include "flutter/lib/ui/painting/image_encoding_impeller.h"
@@ -38,9 +38,9 @@ class Context;
 namespace flutter {
 namespace {
 
-// Reelx P2b/P2c (oneCopyReadback) live in this file's readback.
-[[maybe_unused]] const bool kReelxOneCopyReadback = [] {
-  reelx::SetAvailable(reelx::Feature::kOneCopyReadback);
+// EnginePerf P2b/P2c (oneCopyReadback) live in this file's readback.
+[[maybe_unused]] const bool kEnginePerfOneCopyReadback = [] {
+  engine_perf::SetAvailable(engine_perf::Feature::kOneCopyReadback);
   return true;
 }();
 
@@ -86,13 +86,14 @@ fml::StatusOr<sk_sp<SkData>> CopyImageByteData(
                        "Could not copy pixels from the raster image.");
   }
 
-  const bool one_copy = reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback);
+  const bool one_copy =
+      engine_perf::IsFeatureOn(engine_perf::Feature::kOneCopyReadback);
 
   // The color types already match. No need to swizzle. Return early.
   if (pixmap.colorType() == color_type && pixmap.alphaType() == alpha_type) {
     if (one_copy) {
-      // Reelx P2b: the bytes are the downloaded buffer itself, kept alive by
-      // the raster image until Dart lets the data go.
+      // EnginePerf P2b: the bytes are the downloaded buffer itself, kept alive
+      // by the raster image until Dart lets the data go.
       SkImage* owner = SkSafeRef(raster_image.get());
       return SkData::MakeWithProc(
           pixmap.addr(), pixmap.computeByteSize(),
@@ -105,7 +106,7 @@ fml::StatusOr<sk_sp<SkData>> CopyImageByteData(
   }
 
   if (one_copy) {
-    // Reelx P2b: swizzle straight into the returned data, one pass.
+    // EnginePerf P2b: swizzle straight into the returned data, one pass.
     SkImageInfo info =
         SkImageInfo::Make(raster_image->width(), raster_image->height(),
                           color_type, alpha_type, nullptr);
@@ -174,8 +175,8 @@ void EncodeImageAndInvokeDataCallback(
           });
         }
       };
-  // Reelx P2c: the copy (or swizzle) runs on a concurrent worker, not on the
-  // IO thread, which image decoding also uses.
+  // EnginePerf P2c: the copy (or swizzle) runs on a concurrent worker, not on
+  // the IO thread, which image decoding also uses.
   auto encode_task = [encode_now = std::move(encode_now), concurrent_runner](
                          const fml::StatusOr<sk_sp<SkImage>>& raster_image) {
     DispatchEncode(concurrent_runner,
@@ -207,7 +208,7 @@ void DispatchEncode(
     const std::shared_ptr<fml::ConcurrentTaskRunner>& concurrent_runner,
     std::function<void()> encode) {
   if (concurrent_runner &&
-      reelx::IsFeatureOn(reelx::Feature::kOneCopyReadback)) {
+      engine_perf::IsFeatureOn(engine_perf::Feature::kOneCopyReadback)) {
     concurrent_runner->PostTask(std::move(encode));
     return;
   }

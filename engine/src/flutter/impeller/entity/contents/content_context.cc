@@ -1019,8 +1019,8 @@ void ContentContext::ResetTransientsBuffers() {
     indexes_host_buffer_->Reset();
   }
 
-  // Reelx P14: this runs once per onscreen frame. When frames go by with no
-  // snapshot, the textures kept for the next one are only held memory.
+  // EnginePerf P14: this runs once per onscreen frame. When frames go by with
+  // no snapshot, the textures kept for the next one are only held memory.
   SnapshotTargetPool& pool = snapshot_target_pool_;
   if (pool.frames_since_snapshot < SnapshotTargetPool::kIdleFrames &&
       ++pool.frames_since_snapshot == SnapshotTargetPool::kIdleFrames) {

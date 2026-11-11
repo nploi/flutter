@@ -5,12 +5,12 @@
 #import "flutter/shell/platform/darwin/macos/framework/Source/FlutterExternalTexture.h"
 
 #include "flutter/fml/platform/darwin/cf_utils.h"
-#include "flutter/lib/ui/reelx/reelx_ffi.h"
+#include "flutter/lib/ui/engine_perf/engine_perf_ffi.h"
 
 namespace {
-// Reelx P5 (bt709Textures) lives in this file.
-[[maybe_unused]] const bool kReelxBt709Textures = [] {
-  flutter::reelx::SetAvailable(flutter::reelx::Feature::kBt709Textures);
+// EnginePerf P5 (bt709Textures) lives in this file.
+[[maybe_unused]] const bool kEnginePerfBt709Textures = [] {
+  flutter::engine_perf::SetAvailable(flutter::engine_perf::Feature::kBt709Textures);
   return true;
 }();
 }  // namespace
@@ -112,10 +112,10 @@ namespace {
   textureOut->textures = _textures.data();
   OSType pixel_format = CVPixelBufferGetPixelFormatType(pixelBuffer);
   bool limited = pixel_format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-  // Reelx P5: a buffer tagged BT.709 (HD video) is converted with BT.709
+  // EnginePerf P5: a buffer tagged BT.709 (HD video) is converted with BT.709
   // while bt709Textures is on; untagged buffers keep BT.601 as before.
   bool bt709 = false;
-  if (flutter::reelx::IsFeatureOn(flutter::reelx::Feature::kBt709Textures)) {
+  if (flutter::engine_perf::IsFeatureOn(flutter::engine_perf::Feature::kBt709Textures)) {
     if (@available(macOS 12.0, *)) {
       CFTypeRef matrix = CVBufferCopyAttachment(pixelBuffer, kCVImageBufferYCbCrMatrixKey, nullptr);
       if (matrix != nullptr) {

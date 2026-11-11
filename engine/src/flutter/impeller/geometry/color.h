@@ -51,7 +51,7 @@ namespace impeller {
 
 struct Vector4;
 
-// Reelx P5 adds the BT.709 spaces after the existing ones, keeping their
+// EnginePerf P5 adds the BT.709 spaces after the existing ones, keeping their
 // values (the YUV shader reads the value as a float).
 enum class YUVColorSpace {
   kBT601LimitedRange,

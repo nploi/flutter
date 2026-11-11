@@ -29,7 +29,7 @@ constexpr Matrix kMatrixBT601FullRange = {
       0.0,    0.0,   0.0, 1.0
 };
 
-// Reelx P5: BT.709 (Kr 0.2126, Kb 0.0722); limited range scales luma by
+// EnginePerf P5: BT.709 (Kr 0.2126, Kb 0.0722); limited range scales luma by
 // 255/219 and chroma by 255/224.
 constexpr Matrix kMatrixBT709LimitedRange = {
     1.16438,  1.16438, 1.16438, 0.0,

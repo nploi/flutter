@@ -13,9 +13,8 @@ them (`manifest`). Release assets:
                                             (the path inside an APK)
   Flutter-<mode>.xcframework.zip            iOS app engine (device only)
   engine-folder-<os>-<cpu>.zip              the local-engine layout `flutter test`
-                                            and `reelx render` use (out/host_debug,
-                                            without dart-sdk: the installer links
-                                            the SDK's)
+                                            uses (out/host_debug, without dart-sdk:
+                                            link the SDK's)
   manifest.json                             identity + sha256 of every asset
   SHA256SUMS                                sha256 of every asset and the manifest
 

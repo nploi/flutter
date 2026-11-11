@@ -141,7 +141,7 @@ static impeller::SamplerDescriptor ToSamplerDescriptor(
   return desc;
 }
 
-// Reelx P15: whether an image drawn with [paint] is sampled by that draw
+// EnginePerf P15: whether an image drawn with [paint] is sampled by that draw
 // alone, at the draw's own scale. A filter, a mask blur or an advanced blend
 // takes the image as an input and may sample it again at another scale (the
 // gaussian blur also looks at whether its input has mipmaps).
@@ -757,7 +757,7 @@ void DlDispatcherBase::drawImageRect(const sk_sp<flutter::DlImage> image,
   std::shared_ptr<Texture> texture = GetTextureAsUploaded(image);
   if (texture &&
       (texture->HasDeferredMipmaps() || texture->WantsLazyMipmaps())) {
-    // Reelx P15: a draw that can only read level 0 (its sampler asks for
+    // EnginePerf P15: a draw that can only read level 0 (its sampler asks for
     // nothing else, or no texel gets less than a pixel) is given a sampler
     // that says so, and the mipmaps this image was made without stay unmade.
     // The pixels are those of a mipmap sampler, which reads level 0 alone
@@ -1279,7 +1279,7 @@ bool SameTarget(const TextureDescriptor& a, const TextureDescriptor& b) {
          a.compression_type == b.compression_type;
 }
 
-// Reelx P2a: a texture for [desc] from [pool], reused when nothing else
+// EnginePerf P2a: a texture for [desc] from [pool], reused when nothing else
 // holds it, else new (the pool keeps at most three).
 std::shared_ptr<Texture> TargetFromPool(SnapshotTargetPool& pool,
                                         Allocator& allocator,
@@ -1317,8 +1317,8 @@ std::shared_ptr<Texture> TargetFromPool(SnapshotTargetPool& pool,
   return texture;
 }
 
-// Reelx P14: the attachments [pool] keeps for snapshot targets of [size] and
-// [format], or an empty set to fill (the pool keeps the two used last: an
+// EnginePerf P14: the attachments [pool] keeps for snapshot targets of [size]
+// and [format], or an empty set to fill (the pool keeps the two used last: an
 // export alternates between its frame and the frame packed for the encoder).
 SnapshotAttachments& AttachmentsFromPool(SnapshotTargetPool& pool,
                                          ISize size,
@@ -1340,8 +1340,8 @@ SnapshotAttachments& AttachmentsFromPool(SnapshotTargetPool& pool,
   return sets.back();
 }
 
-// Reelx P14: gives [target] the depth/stencil texture of [attachments] (a new
-// one when it has none), the way Canvas does for a root target without one,
+// EnginePerf P14: gives [target] the depth/stencil texture of [attachments] (a
+// new one when it has none), the way Canvas does for a root target without one,
 // and keeps what the target draws with for the next snapshot. Returns the id
 // of the kept attachments, 0 when the target is not complete.
 uint64_t AttachFromPool(SnapshotTargetPool& pool,
@@ -1379,8 +1379,8 @@ uint64_t AttachFromPool(SnapshotTargetPool& pool,
   return attachments.id;
 }
 
-// Reelx P13: after a snapshot drew with the snapshots' host buffers, resets
-// them if that is safe. What the snapshot emplaced is read by command
+// EnginePerf P13: after a snapshot drew with the snapshots' host buffers,
+// resets them if that is safe. What the snapshot emplaced is read by command
 // buffers already submitted; an empty one submitted behind them tells when
 // they have completed (a queue completes its buffers in order). A reset
 // hands out the buffers of four resets ago, so it waits while a snapshot
@@ -1419,7 +1419,7 @@ bool ResetSnapshotHostBuffers(ContentContext& renderer) {
 
 namespace {
 
-// Reelx P16: the rectangle of a DrawRect record.
+// EnginePerf P16: the rectangle of a DrawRect record.
 class DrawRectReader : public flutter::IgnoreAttributeDispatchHelper,
                        public flutter::IgnoreClipDispatchHelper,
                        public flutter::IgnoreTransformDispatchHelper,
@@ -1487,15 +1487,15 @@ RenderTarget MakeSnapshotTarget(const Context& context,
                                 bool* pool_hit,
                                 bool pooled_attachments,
                                 bool* attachments_hit) {
-  // Reelx P3: offscreen MSAA resolve textures are lossy-compressed on GPUs
+  // EnginePerf P3: offscreen MSAA resolve textures are lossy-compressed on GPUs
   // that support it (Apple family 8+), which changes pixel bytes slightly.
   // A lossless target keeps the snapshot exactly as rendered, for callers
   // that read it back bit for bit.
-  // Reelx P2a: a pooled target reuses a texture of an earlier snapshot
+  // EnginePerf P2a: a pooled target reuses a texture of an earlier snapshot
   // nothing holds any more. Only one-level targets: a reused texture's
   // mipmaps wouldn't be generated again.
   pooled_target = pooled_target && mip_count == 1;
-  // Reelx P14: with pooled attachments the target also draws with the MSAA
+  // EnginePerf P14: with pooled attachments the target also draws with the MSAA
   // colour and depth/stencil textures of the snapshot of this size before
   // it. Where MSAA resolves implicitly (OpenGL ES with
   // EXT_multisampled_render_to_texture) the multisample texture is the
@@ -1637,7 +1637,7 @@ std::shared_ptr<Texture> DisplayListToTexture(
   if (generate_mips) {
     mip_count = size.MipCount();
   }
-  // Reelx P16: a single-sample snapshot (see DrawsOnlyPixelAlignedFills)
+  // EnginePerf P16: a single-sample snapshot (see DrawsOnlyPixelAlignedFills)
   // draws without MSAA, so without its colour and depth/stencil textures and
   // the resolve, and its target isn't lossy-compressed.
   const bool msaa =
@@ -1653,7 +1653,7 @@ std::shared_ptr<Texture> DisplayListToTexture(
     return nullptr;
   }
 
-  // Reelx P13: from here to the cleanup below the snapshot emplaces into
+  // EnginePerf P13: from here to the cleanup below the snapshot emplaces into
   // host buffers of its own.
   if (snapshot_host_buffers) {
     context.GetContentContext().UseSnapshotTransientsBuffers(true);
