@@ -9,6 +9,9 @@ them (`manifest`). Release assets:
   FlutterMacOS-profile.framework.zip        the same in profile mode (if built)
   flutter_linux_gtk-release-linux-x64.zip   Linux app engine (libflutter_linux_gtk.so)
   flutter_windows-release-windows-x64.zip   Windows app engine (flutter_windows.dll)
+  libflutter-<mode>-android-<cpu>.zip       Android app engine, as lib/<abi>/libflutter.so
+                                            (the path inside an APK)
+  Flutter-<mode>.xcframework.zip            iOS app engine (device only)
   engine-folder-<os>-<cpu>.zip              the local-engine layout `flutter test`
                                             and `reelx render` use (out/host_debug,
                                             without dart-sdk: the installer links
@@ -17,7 +20,7 @@ them (`manifest`). Release assets:
   SHA256SUMS                                sha256 of every asset and the manifest
 
 Usage:
-  package_artifacts.py assets --platform <macos|linux|windows> --out-dir <engine/src/out>
+  package_artifacts.py assets --platform <macos|linux|windows|android|ios> --out-dir <engine/src/out>
       --dest <dir> [--part all|app|engine-folder] [--tester-dir host_debug_arm64] [--cpu arm64|x64]
   package_artifacts.py manifest --dest <dir> --flutter-version 3.47.9
       --engine-revision <sha> --content-hash <hash> --fork-commit <sha>
@@ -37,6 +40,11 @@ import zipfile
 
 ENGINE_FOLDER_FILES = ('flutter_tester', 'flutter_tester.exe', 'icudtl.dat',
                        'flutter_patched_sdk', 'gen')
+
+PLATFORMS = ('macos', 'linux', 'windows', 'android', 'ios')
+
+# Android's name for each CPU: the lib/<abi> folder of an APK.
+ANDROID_ABIS = {'arm64': 'arm64-v8a', 'x64': 'x86_64'}
 
 
 class PackageError(Exception):
@@ -72,10 +80,34 @@ def _zip_tree(zip_path, base, entries, arc_prefix=''):
         z.write(full, os.path.join(arc_prefix, entry))
 
 
-def _zip_framework(zip_path, folder):
-  """Zips [folder]/FlutterMacOS.framework keeping its symlinks (zip -y)."""
-  subprocess.run(['zip', '-qry', os.path.abspath(zip_path), 'FlutterMacOS.framework'],
-                 cwd=folder, check=True)
+def _zip_framework(zip_path, folder, name='FlutterMacOS.framework'):
+  """Zips [folder]/[name] keeping its symlinks (zip -y)."""
+  subprocess.run(['zip', '-qry', os.path.abspath(zip_path), name], cwd=folder, check=True)
+
+
+def _mobile(platform, out_dir, dest, cpu):
+  """Zips the app engine of every mode built for [platform] (release,
+  profile); at least one must be there."""
+  made = []
+  for mode in ('release', 'profile'):
+    if platform == 'android':
+      folder = os.path.join(out_dir, f'android_{mode}_{cpu}')
+      library = os.path.join(folder, 'lib.stripped', 'libflutter.so')
+      if not os.path.isfile(library):
+        continue
+      name = f'libflutter-{mode}-android-{cpu}.zip'
+      with zipfile.ZipFile(_fresh(dest, name), 'w', zipfile.ZIP_DEFLATED) as z:
+        z.write(library, f'lib/{ANDROID_ABIS[cpu]}/libflutter.so')
+    else:
+      folder = os.path.join(out_dir, f'ios_{mode}')
+      if not os.path.isdir(os.path.join(folder, 'Flutter.xcframework')):
+        continue
+      name = f'Flutter-{mode}.xcframework.zip'
+      _zip_framework(_fresh(dest, name), folder, 'Flutter.xcframework')
+    made.append(name)
+  if not made:
+    raise PackageError(f'no {platform} release or profile build in {out_dir}')
+  return made
 
 
 def _engine_folder(out_dir, tester_dir, dest, name):
@@ -98,8 +130,16 @@ def assets(platform, out_dir, dest, tester_dir='host_debug', cpu='x64', part='al
   [part] is 'app' (the app's engine), 'engine-folder' (the tester layout) or
   'all', so separate build jobs can each package what they built.
   """
-  if platform not in ('macos', 'linux', 'windows'):
+  if platform not in PLATFORMS:
     raise PackageError(f'unknown platform {platform}')
+  if platform in ('android', 'ios'):
+    # A phone's engine has no tester to run on this machine.
+    if part == 'engine-folder':
+      raise PackageError(f'{platform} has no engine folder')
+    if platform == 'android' and cpu not in ANDROID_ABIS:
+      raise PackageError(f'unknown Android CPU {cpu}')
+    os.makedirs(dest, exist_ok=True)
+    return _mobile(platform, out_dir, dest, cpu)
   os.makedirs(dest, exist_ok=True)
   made = []
   if part == 'engine-folder':
@@ -163,7 +203,7 @@ def main(argv):
   parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
   sub = parser.add_subparsers(dest='command', required=True)
   a = sub.add_parser('assets')
-  a.add_argument('--platform', required=True, choices=['macos', 'linux', 'windows'])
+  a.add_argument('--platform', required=True, choices=PLATFORMS)
   a.add_argument('--out-dir', required=True)
   a.add_argument('--dest', required=True)
   a.add_argument('--tester-dir', default='host_debug')

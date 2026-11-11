@@ -1,0 +1,810 @@
+# Builds the engine patches on every platform the editor ships, one job each:
+#
+#   linux    host_debug_unopt: unit tests (Impeller on OpenGL ES, the Vulkan
+#            mock), exported C functions, artifact engine-folder-linux-x64
+#   macos    host_debug_unopt_arm64 on Apple silicon: unit tests (Metal),
+#            exported C functions, artifact engine-folder-macos-arm64
+#   windows  host_debug_unopt: unit tests, exported C functions, artifact
+#            engine-folder-windows-x64
+#   android  libflutter.so for arm64 (release, profile): exported C
+#            functions, artifacts libflutter-<mode>-android-arm64
+#   ios      Flutter.xcframework for devices (release, profile): exported C
+#            functions, artifacts Flutter-<mode>.xcframework
+#
+# Artifacts are kept 14 days; reelx/ENGINE_SETUP.md says how to use them.
+# Runs on pushes to engine-perf/*-wip and pull requests into them that
+# touch the engine (a change can be tried on a phone before it merges), and
+# by hand, for the platforms and phone modes picked:
+#
+#   gh workflow run engine.yml --repo <owner>/flutter --ref <branch> \
+#     -f linux=false -f windows=false -f mobile_modes=release
+#
+# Engine releases are built by engine-release.yml from a tag.
+name: Engine
+
+on:
+  push:
+    branches: ['engine-perf/*-wip']
+    paths:
+      - 'engine/src/flutter/**'
+      - 'DEPS'
+      - '.github/workflows/engine.yml'
+      - 'reelx/tools/**'
+  pull_request:
+    branches: ['engine-perf/*-wip']
+    paths:
+      - 'engine/src/flutter/**'
+      - 'DEPS'
+      - '.github/workflows/engine.yml'
+      - 'reelx/tools/**'
+  workflow_dispatch:
+    inputs:
+      linux:
+        description: Linux
+        type: boolean
+        default: true
+      macos:
+        description: macOS (Apple silicon)
+        type: boolean
+        default: true
+      windows:
+        description: Windows
+        type: boolean
+        default: true
+      android:
+        description: Android (arm64)
+        type: boolean
+        default: true
+      ios:
+        description: iOS (devices)
+        type: boolean
+        default: true
+      mobile_modes:
+        description: Android and iOS runtime modes
+        type: choice
+        options: [release and profile, release, profile]
+        default: release and profile
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.47.9'
+  # Pull requests only from this repository's branches: jobs clone the
+  # branch by name.
+  BRANCH: ${{ github.head_ref || github.ref_name }}
+
+jobs:
+  linux:
+    if: >-
+      github.repository != 'flutter/flutter' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      ROOT: ${{ github.workspace }}/w
+      OUT: ${{ github.workspace }}/w/flutter/engine/src/out/host_debug_unopt
+    steps:
+      - name: Free disk space
+        run: |
+          df -h /
+          # Toolchains this job never uses (about 30 GB).
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost /usr/local/.ghcup
+          sudo docker image prune --all --force > /dev/null || true
+          df -h /
+
+      - name: Packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg xvfb libgtk-3-dev > /dev/null
+
+      - name: Checkout (shallow)
+        run: |
+          mkdir -p "$ROOT"
+          git clone --quiet --depth 1 --branch "$BRANCH" "https://github.com/$GITHUB_REPOSITORY.git" "$ROOT/flutter"
+          git -C "$ROOT/flutter" log --oneline -1
+
+      - name: depot_tools
+        run: |
+          git clone --quiet --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$ROOT/depot_tools"
+          echo "$ROOT/depot_tools" >> "$GITHUB_PATH"
+
+      - name: gclient sync
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          cat > .gclient <<'EOF'
+          solutions = [
+            {
+              "custom_deps": {},
+              "deps_file": "DEPS",
+              "managed": False,
+              "name": ".",
+              "safesync_url": "",
+              "url": "https://github.com/flutter/flutter.git",
+              "custom_vars": {
+                "download_android_deps": False,
+                "download_fuchsia_deps": False,
+                "download_jdk": False,
+                "download_esbuild": False,
+              },
+            },
+          ]
+          EOF
+          gclient sync -D --no-history --shallow
+          df -h /
+
+      - name: Build (host_debug_unopt)
+        id: build
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          python3 engine/src/flutter/tools/gn --unoptimized --no-rbe --no-goma
+          start=$(date +%s)
+          third_party/ninja/ninja -C engine/src/out/host_debug_unopt \
+            flutter/shell/testing:testing \
+            flutter/lib/snapshot:kernel_platform_files \
+            flutter/flutter_frontend_server:frontend_server \
+            flutter/shell/platform/linux:flutter_linux_gtk \
+            flutter/lib/ui:ui_unittests \
+            flutter/impeller:impeller_unittests
+          echo "build took $(( ($(date +%s) - start) / 60 )) min"
+          # flutter_tools wants a dart-sdk next to a local engine.
+          ln -sfn ../../flutter/prebuilts/linux-x64/dart-sdk "$OUT/dart-sdk"
+          df -h /
+
+      - name: Exported C functions
+        if: steps.build.outcome == 'success'
+        run: |
+          want="ReelxEngineInfo ReelxSetFeature ReelxImageReadbackToFd ReelxRepeatLastToFd ReelxReleaseFd ReelxRegisterShaderBytes ReelxUnregisterShaderBytes"
+          failed=0
+          for bin in "$OUT/flutter_tester" "$OUT/libflutter_linux_gtk.so"; do
+            have=$(nm -D --defined-only "$bin" | awk '{print $3}' | grep '^Reelx' | sort | tr '\n' ' ')
+            echo "$(basename "$bin"): $have"
+            for f in $want; do
+              case " $have " in *" $f "*) ;; *) echo "::error::$(basename "$bin") does not export $f"; failed=1 ;; esac
+            done
+          done
+          exit $failed
+
+      - name: Engine unit tests
+        if: steps.build.outcome == 'success'
+        run: |
+          "$OUT/ui_unittests" --gtest_filter='Reelx*:ImageEncodingReelx*'
+          # Impeller: OpenGL ES playgrounds (Vulkan can't start on this
+          # runner), the Vulkan mock and the GLES texture tests.
+          xvfb-run -a "$OUT/impeller_unittests" \
+            --gtest_filter='*Reelx*OpenGLES*:Reelx*Test.*:EntityTest.YUV*OpenGLES*:RenderPassVK.*:TextureGLESTest.*'
+
+      # The engine folder (what `flutter test --local-engine` and
+      # `reelx render` take), for Reelx's own CI to test on: it downloads
+      # the latest successful run's artifact.
+      - name: Engine folder artifact
+        id: engine_folder
+        if: steps.build.outcome == 'success'
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          python3 reelx/tools/package_artifacts.py assets --platform linux --part engine-folder \
+            --out-dir engine/src/out --dest "$ROOT/dist" --tester-dir host_debug_unopt --cpu x64
+          ls -la "$ROOT/dist"
+
+      - name: Upload the engine folder
+        if: steps.engine_folder.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-folder-linux-x64
+          path: ${{ env.ROOT }}/dist/engine-folder-linux-x64.zip
+          retention-days: 14
+
+      # Paused: Reelx is a private repository, and checking it out here needs
+      # the owner's decision on a token. The engine's own tests above cover
+      # the patches; Reelx's tests on the built engine run elsewhere for now.
+      - name: Flutter ${{ env.FLUTTER_VERSION }} and Reelx
+        if: false
+        run: |
+          git clone --quiet --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$ROOT/sdk"
+          git clone --quiet --depth 1 https://github.com/reelx-dev/reelx.git "$ROOT/reelx"
+          echo "$ROOT/sdk/bin" >> "$GITHUB_PATH"
+
+      - name: Reelx tests on the built engine
+        if: false
+        run: |
+          engine=(--local-engine-src-path="$ROOT/flutter/engine/src" --local-engine=host_debug_unopt --local-engine-host=host_debug_unopt)
+          flutter --version
+          failed=0
+          # Without the engine's functions the Reelx tests take their
+          # stock-engine branch and pass, so first check they are found.
+          cat > "$ROOT/reelx/packages/reelx/test/built_engine_test.dart" <<'EOF'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:reelx/reelx.dart';
+          void main() {
+            test('ShaderBytes finds the built engine', () {
+              expect(ShaderBytes.isSupported, isTrue);
+            });
+          }
+          EOF
+          cat > "$ROOT/reelx/packages/reelx_export/test/built_engine_test.dart" <<'EOF'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:reelx_export/reelx_export.dart';
+          void main() {
+            test('the engine reports itself with its Linux features', () {
+              final info = ReelxEngine.current.info;
+              expect(info.isStock, isFalse);
+              expect(info.has('oneCopyReadback'), isTrue);
+              expect(info.has('fdHandoff'), isTrue);
+            });
+          }
+          EOF
+          cd "$ROOT/reelx/packages/reelx"
+          flutter pub get > /dev/null
+          flutter test "${engine[@]}" test/built_engine_test.dart test/shaders || failed=1
+          flutter test "${engine[@]}" --enable-impeller test/shaders || failed=1
+          cd "$ROOT/reelx/packages/reelx_export"
+          flutter pub get > /dev/null
+          flutter test "${engine[@]}" test/built_engine_test.dart test/engine || failed=1
+          # The gated export suite on the built engine, Skia then Impeller.
+          flutter test "${engine[@]}" --dart-define=REELX_RUN_EXPORT_TESTS=true || failed=1
+          flutter test "${engine[@]}" --enable-impeller --dart-define=REELX_RUN_EXPORT_TESTS=true || failed=1
+          exit $failed
+
+  macos:
+    if: >-
+      github.repository != 'flutter/flutter' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.macos)
+    runs-on: macos-15
+    timeout-minutes: 355
+    env:
+      ROOT: ${{ github.workspace }}/w
+    steps:
+      - name: Machine
+        run: |
+          sw_vers; uname -m; xcodebuild -version; df -h /
+          system_profiler SPDisplaysDataType | grep -E 'Chipset|Metal' || true
+
+      - name: Packages
+        run: brew install ffmpeg > /dev/null
+
+      - name: Checkout (shallow)
+        run: |
+          mkdir -p "$ROOT"
+          git clone --quiet --depth 1 --branch "$BRANCH" "https://github.com/$GITHUB_REPOSITORY.git" "$ROOT/flutter"
+          git -C "$ROOT/flutter" log --oneline -1
+
+      - name: depot_tools
+        run: |
+          git clone --quiet --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$ROOT/depot_tools"
+          echo "$ROOT/depot_tools" >> "$GITHUB_PATH"
+
+      - name: gclient sync
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          cat > .gclient <<'EOF'
+          solutions = [
+            {
+              "custom_deps": {},
+              "deps_file": "DEPS",
+              "managed": False,
+              "name": ".",
+              "safesync_url": "",
+              "url": "https://github.com/flutter/flutter.git",
+              "custom_vars": {
+                "download_android_deps": False,
+                "download_fuchsia_deps": False,
+                "download_jdk": False,
+                "download_esbuild": False,
+              },
+            },
+          ]
+          EOF
+          gclient sync -D --no-history --shallow
+          df -h /
+
+      - name: Build (host_debug_unopt)
+        id: build
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          python3 engine/src/flutter/tools/gn --unoptimized --no-rbe --no-goma
+          # gn names the folder after the CPU on Apple silicon.
+          out=$(ls -d engine/src/out/host_debug_unopt* | head -1)
+          echo "OUT=$ROOT/flutter/$out" >> "$GITHUB_ENV"
+          echo "ENGINE_NAME=$(basename "$out")" >> "$GITHUB_ENV"
+          start=$(date +%s)
+          third_party/ninja/ninja -C "$out" \
+            flutter/shell/testing:testing \
+            flutter/lib/snapshot:kernel_platform_files \
+            flutter/flutter_frontend_server:frontend_server \
+            flutter/shell/platform/darwin/macos:flutter_framework \
+            flutter/lib/ui:ui_unittests \
+            flutter/impeller:impeller_unittests
+          echo "build took $(( ($(date +%s) - start) / 60 )) min"
+          # flutter_tools wants a dart-sdk next to a local engine.
+          ln -sfn ../../flutter/prebuilts/macos-$(uname -m | sed 's/x86_64/x64/')/dart-sdk "$out/dart-sdk"
+          df -h /
+
+      - name: Exported C functions
+        if: steps.build.outcome == 'success'
+        run: |
+          want="ReelxEngineInfo ReelxSetFeature ReelxImageReadbackToFd ReelxRepeatLastToFd ReelxReleaseFd ReelxRegisterShaderBytes ReelxUnregisterShaderBytes"
+          failed=0
+          for bin in "$OUT/flutter_tester" "$OUT/FlutterMacOS.framework/FlutterMacOS"; do
+            have=$(nm -gU "$bin" | awk '{print $3}' | sed 's/^_//' | grep '^Reelx' | sort | tr '\n' ' ')
+            echo "$(basename "$bin"): $have"
+            for f in $want; do
+              case " $have " in *" $f "*) ;; *) echo "::error::$(basename "$bin") does not export $f"; failed=1 ;; esac
+            done
+          done
+          exit $failed
+
+      - name: Engine unit tests
+        if: steps.build.outcome == 'success'
+        run: |
+          "$OUT/ui_unittests" --gtest_filter='Reelx*:ImageEncodingReelx*'
+          # Impeller on Metal (the runner's virtual GPU), the Vulkan mock.
+          "$OUT/impeller_unittests" --gtest_filter='*Reelx*Metal*:Reelx*Test.*:EntityTest.YUV*Metal*:RenderPassVK.*'
+
+      # The engine folder (what `flutter test --local-engine` and
+      # `reelx render` take) for Apple silicon Macs.
+      - name: Engine folder artifact
+        id: engine_folder
+        if: steps.build.outcome == 'success'
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          python3 reelx/tools/package_artifacts.py assets --platform macos --part engine-folder \
+            --out-dir engine/src/out --dest "$ROOT/dist" --tester-dir "$ENGINE_NAME" --cpu arm64
+          ls -la "$ROOT/dist"
+
+      - name: Upload the engine folder
+        if: steps.engine_folder.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-folder-macos-arm64
+          path: ${{ env.ROOT }}/dist/engine-folder-macos-arm64.zip
+          retention-days: 14
+
+      # Paused: Reelx is a private repository, and checking it out here needs
+      # the owner's decision on a token. The engine's own tests above cover
+      # the patches; Reelx's tests on the built engine run elsewhere for now.
+      - name: Flutter ${{ env.FLUTTER_VERSION }} and Reelx
+        if: false
+        run: |
+          git clone --quiet --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$ROOT/sdk"
+          git clone --quiet --depth 1 https://github.com/reelx-dev/reelx.git "$ROOT/reelx"
+          echo "$ROOT/sdk/bin" >> "$GITHUB_PATH"
+
+      - name: Reelx tests on the built engine
+        if: false
+        run: |
+          engine=(--local-engine-src-path="$ROOT/flutter/engine/src" --local-engine="$ENGINE_NAME" --local-engine-host="$ENGINE_NAME")
+          flutter --version
+          failed=0
+          # Without the engine's functions the Reelx tests take their
+          # stock-engine branch and pass, so first check they are found.
+          cat > "$ROOT/reelx/packages/reelx/test/built_engine_test.dart" <<'EOF'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:reelx/reelx.dart';
+          void main() {
+            test('ShaderBytes finds the built engine', () {
+              expect(ShaderBytes.isSupported, isTrue);
+            });
+          }
+          EOF
+          cat > "$ROOT/reelx/packages/reelx_export/test/built_engine_test.dart" <<'EOF'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:reelx_export/reelx_export.dart';
+          void main() {
+            test('the engine reports itself with its macOS features', () {
+              final info = ReelxEngine.current.info;
+              expect(info.isStock, isFalse);
+              expect(info.has('oneCopyReadback'), isTrue);
+              expect(info.has('fdHandoff'), isTrue);
+              expect(info.has('testerMetal'), isTrue);
+            });
+          }
+          EOF
+          cd "$ROOT/reelx/packages/reelx"
+          flutter pub get > /dev/null
+          flutter test "${engine[@]}" test/built_engine_test.dart test/shaders || failed=1
+          # P6: with --enable-impeller the tester renders with Metal.
+          flutter test "${engine[@]}" --enable-impeller test/shaders || failed=1
+          cd "$ROOT/reelx/packages/reelx_export"
+          flutter pub get > /dev/null
+          flutter test "${engine[@]}" test/built_engine_test.dart test/engine || failed=1
+          # The gated export suite on the built engine, Skia then Metal.
+          flutter test "${engine[@]}" --dart-define=REELX_RUN_EXPORT_TESTS=true || failed=1
+          flutter test "${engine[@]}" --enable-impeller --dart-define=REELX_RUN_EXPORT_TESTS=true || failed=1
+          exit $failed
+
+  windows:
+    if: >-
+      github.repository != 'flutter/flutter' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.windows)
+    # The engine's toolchain wants Windows SDK 10.0.22621.0
+    # (build/toolchain/win/setup_toolchain.py), which this image has and
+    # windows-latest (2025) doesn't.
+    runs-on: windows-2022
+    timeout-minutes: 355
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # Build with the runner's Visual Studio, not Google's packaged one.
+      DEPOT_TOOLS_WIN_TOOLCHAIN: '0'
+    steps:
+      - name: Work folder on the largest drive
+        run: |
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB)}}
+          $drive = Get-PSDrive -PSProvider FileSystem | Sort-Object Free -Descending | Select-Object -First 1
+          $root = "$($drive.Name):\w"
+          New-Item -ItemType Directory -Force $root | Out-Null
+          "ROOT=$root" >> $env:GITHUB_ENV
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          "GYP_MSVS_OVERRIDE_PATH=$vs" >> $env:GITHUB_ENV
+          "vs2022_install=$vs" >> $env:GITHUB_ENV
+          Write-Host "work folder $root on $($drive.Name): ($([math]::Round($drive.Free/1GB)) GB free), Visual Studio $vs"
+
+      - name: Checkout (shallow)
+        run: |
+          git config --global core.longpaths true
+          git clone --quiet --depth 1 --branch "$env:BRANCH" "https://github.com/$env:GITHUB_REPOSITORY.git" "$env:ROOT\flutter"
+          git -C "$env:ROOT\flutter" log --oneline -1
+
+      - name: depot_tools
+        run: |
+          git clone --quiet --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$env:ROOT\depot_tools"
+          "$env:ROOT\depot_tools" >> $env:GITHUB_PATH
+
+      - name: gclient sync
+        working-directory: ${{ env.ROOT }}\flutter
+        run: |
+          @'
+          solutions = [
+            {
+              "custom_deps": {},
+              "deps_file": "DEPS",
+              "managed": False,
+              "name": ".",
+              "safesync_url": "",
+              "url": "https://github.com/flutter/flutter.git",
+              "custom_vars": {
+                "download_android_deps": False,
+                "download_fuchsia_deps": False,
+                "download_jdk": False,
+                "download_esbuild": False,
+              },
+            },
+          ]
+          '@ | Set-Content -Encoding ascii .gclient
+          gclient sync -D --no-history --shallow
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{n='FreeGB';e={[math]::Round($_.Free/1GB)}}
+
+      - name: Build (host_debug_unopt)
+        id: build
+        working-directory: ${{ env.ROOT }}\flutter
+        run: |
+          python engine\src\flutter\tools\gn --unoptimized --no-rbe --no-goma
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $start = Get-Date
+          third_party\ninja\ninja.exe -C engine\src\out\host_debug_unopt `
+            flutter/shell/platform/windows:flutter_windows `
+            flutter/shell/testing:testing `
+            flutter/lib/snapshot:kernel_platform_files `
+            flutter/flutter_frontend_server:frontend_server `
+            flutter/lib/ui:ui_unittests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "build took $([math]::Round(((Get-Date) - $start).TotalMinutes)) min"
+          # flutter_tools wants a dart-sdk next to a local engine.
+          New-Item -ItemType Junction -Path "$PWD\engine\src\out\host_debug_unopt\dart-sdk" `
+            -Target "$PWD\engine\src\flutter\prebuilts\windows-x64\dart-sdk" | Out-Null
+
+      - name: Exported C functions
+        working-directory: ${{ env.ROOT }}\flutter\engine\src
+        run: |
+          $readobj = "flutter\buildtools\windows-x64\clang\bin\llvm-readobj.exe"
+          $want = 'ReelxEngineInfo','ReelxSetFeature','ReelxImageReadbackToFd','ReelxRepeatLastToFd',
+                  'ReelxReleaseFd','ReelxRegisterShaderBytes','ReelxUnregisterShaderBytes'
+          $failed = $false
+          foreach ($bin in 'out\host_debug_unopt\flutter_windows.dll', 'out\host_debug_unopt\flutter_tester.exe') {
+            $exports = & $readobj --coff-exports $bin | Select-String 'Name: (Reelx\w+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+            $missing = $want | Where-Object { $exports -notcontains $_ }
+            Write-Host "$bin exports: $($exports -join ', ')"
+            if ($missing) { Write-Host "::error::$bin is missing $($missing -join ', ')"; $failed = $true }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Engine unit tests
+        working-directory: ${{ env.ROOT }}\flutter\engine\src
+        run: |
+          out\host_debug_unopt\ui_unittests.exe --gtest_filter="Reelx*:ImageEncodingReelx*"
+          exit $LASTEXITCODE
+
+      # The engine folder (what `flutter test --local-engine` and
+      # `reelx render` take) for Windows.
+      - name: Engine folder artifact
+        id: engine_folder
+        if: steps.build.outcome == 'success'
+        working-directory: ${{ env.ROOT }}\flutter
+        run: |
+          python reelx\tools\package_artifacts.py assets --platform windows --part engine-folder `
+            --out-dir engine\src\out --dest "$env:ROOT\dist" --tester-dir host_debug_unopt --cpu x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem "$env:ROOT\dist"
+
+      - name: Upload the engine folder
+        if: steps.engine_folder.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-folder-windows-x64
+          path: ${{ env.ROOT }}\dist\engine-folder-windows-x64.zip
+          retention-days: 14
+
+      # Paused: Reelx is a private repository, and checking it out here needs
+      # the owner's decision on a token. The engine's own tests above cover
+      # the patches; Reelx's tests on the built engine run elsewhere for now.
+      - name: Flutter ${{ env.FLUTTER_VERSION }} and Reelx
+        if: false
+        run: |
+          git clone --quiet --depth 1 --branch "$env:FLUTTER_VERSION" https://github.com/flutter/flutter.git "$env:ROOT\sdk"
+          git clone --quiet --depth 1 https://github.com/reelx-dev/reelx.git "$env:ROOT\reelx"
+          "$env:ROOT\sdk\bin" >> $env:GITHUB_PATH
+
+      - name: Reelx tests on the built engine
+        if: false
+        run: |
+          $engine = "--local-engine-src-path=$env:ROOT\flutter\engine\src", '--local-engine=host_debug_unopt', '--local-engine-host=host_debug_unopt'
+          flutter --version
+          $failed = $false
+          # Without the engine's functions the Reelx tests below take their
+          # stock-engine branch and pass, so first check they are found.
+          @'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:reelx/reelx.dart';
+          void main() {
+            test('ShaderBytes finds the built engine', () {
+              expect(ShaderBytes.isSupported, isTrue);
+            });
+          }
+          '@ | Set-Content "$env:ROOT\reelx\packages\reelx\test\built_engine_test.dart"
+          @'
+          import 'package:flutter_test/flutter_test.dart';
+          import 'package:reelx_export/reelx_export.dart';
+          void main() {
+            test('the engine reports itself; no fd hand-off on Windows', () {
+              final info = ReelxEngine.current.info;
+              expect(info.isStock, isFalse);
+              expect(info.has('fdHandoff'), isFalse);
+              expect(info.has('oneCopyReadback'), isTrue);
+            });
+          }
+          '@ | Set-Content "$env:ROOT\reelx\packages\reelx_export\test\built_engine_test.dart"
+          Push-Location "$env:ROOT\reelx\packages\reelx"
+          flutter pub get | Out-Null
+          flutter test @engine test\built_engine_test.dart
+          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          # ShaderBytes must load a shader from bytes and draw with it.
+          flutter test @engine test\shaders\shader_bytes_test.dart
+          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          Pop-Location
+          Push-Location "$env:ROOT\reelx\packages\reelx_export"
+          flutter pub get | Out-Null
+          flutter test @engine test\built_engine_test.dart
+          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          flutter test @engine test\engine\engine_extensions_test.dart
+          if ($LASTEXITCODE -ne 0) { $failed = $true }
+          Pop-Location
+          if ($failed) { exit 1 }
+
+  android:
+    if: >-
+      github.repository != 'flutter/flutter' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.android)
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(inputs.mobile_modes == 'release' && '["release"]' || inputs.mobile_modes == 'profile' && '["profile"]' || '["release", "profile"]') }}
+    name: android (${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      ROOT: ${{ github.workspace }}/w
+      OUT: ${{ github.workspace }}/w/flutter/engine/src/out/android_${{ matrix.mode }}_arm64
+    steps:
+      - name: Free disk space
+        run: |
+          df -h /
+          # Toolchains this job never uses; the engine brings its own Android
+          # SDK and NDK.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost /usr/local/.ghcup
+          sudo docker image prune --all --force > /dev/null || true
+          df -h /
+
+      - name: Checkout (shallow)
+        run: |
+          mkdir -p "$ROOT"
+          git clone --quiet --depth 1 --branch "$BRANCH" "https://github.com/$GITHUB_REPOSITORY.git" "$ROOT/flutter"
+          git -C "$ROOT/flutter" log --oneline -1
+
+      - name: depot_tools
+        run: |
+          git clone --quiet --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$ROOT/depot_tools"
+          echo "$ROOT/depot_tools" >> "$GITHUB_PATH"
+
+      - name: gclient sync
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          cat > .gclient <<'EOF'
+          solutions = [
+            {
+              "custom_deps": {},
+              "deps_file": "DEPS",
+              "managed": False,
+              "name": ".",
+              "safesync_url": "",
+              "url": "https://github.com/flutter/flutter.git",
+              "custom_vars": {
+                "download_android_deps": True,
+                "download_fuchsia_deps": False,
+                "download_esbuild": False,
+              },
+            },
+          ]
+          EOF
+          gclient sync -D --no-history --shallow
+          df -h /
+
+      - name: Build identity
+        working-directory: ${{ env.ROOT }}/flutter
+        run: REELX_FLUTTER_VERSION="$FLUTTER_VERSION" reelx/tools/write_build_info.sh dev
+
+      - name: Build (android_${{ matrix.mode }}_arm64)
+        id: build
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          python3 engine/src/flutter/tools/gn --android --android-cpu arm64 \
+            --runtime-mode ${{ matrix.mode }} --no-rbe --no-goma
+          start=$(date +%s)
+          third_party/ninja/ninja -C "$OUT" flutter/shell/platform/android:flutter_shell_native
+          echo "build took $(( ($(date +%s) - start) / 60 )) min"
+          ls -la "$OUT/lib.stripped/libflutter.so"
+          df -h /
+
+      - name: Exported C functions
+        if: steps.build.outcome == 'success'
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          want="ReelxEngineInfo ReelxSetFeature ReelxImageReadbackToFd ReelxRepeatLastToFd ReelxReleaseFd ReelxRegisterShaderBytes ReelxUnregisterShaderBytes"
+          bin="$OUT/lib.stripped/libflutter.so"
+          tools=engine/src/flutter/buildtools/linux-x64/clang/bin
+          "$tools/llvm-readelf" -h "$bin" | grep -E 'Class|Machine'
+          have=$("$tools/llvm-nm" -D --defined-only "$bin" | awk '{print $3}' | grep '^Reelx' | sort | tr '\n' ' ')
+          echo "libflutter.so: $have"
+          failed=0
+          for f in $want; do
+            case " $have " in *" $f "*) ;; *) echo "::error::libflutter.so does not export $f"; failed=1 ;; esac
+          done
+          exit $failed
+
+      - name: Package
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          python3 reelx/tools/package_artifacts.py assets --platform android --part app \
+            --out-dir engine/src/out --dest "$ROOT/dist" --cpu arm64
+          ls -la "$ROOT/dist"
+
+      - name: Upload the engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: libflutter-${{ matrix.mode }}-android-arm64
+          path: ${{ env.ROOT }}/dist/libflutter-${{ matrix.mode }}-android-arm64.zip
+          retention-days: 14
+
+  ios:
+    if: >-
+      github.repository != 'flutter/flutter' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'workflow_dispatch' || inputs.ios)
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(inputs.mobile_modes == 'release' && '["release"]' || inputs.mobile_modes == 'profile' && '["profile"]' || '["release", "profile"]') }}
+    name: ios (${{ matrix.mode }})
+    runs-on: macos-15
+    timeout-minutes: 355
+    env:
+      ROOT: ${{ github.workspace }}/w
+      OUT: ${{ github.workspace }}/w/flutter/engine/src/out/ios_${{ matrix.mode }}
+    steps:
+      - name: Machine
+        run: sw_vers; uname -m; xcodebuild -version; df -h /
+
+      - name: Checkout (shallow)
+        run: |
+          mkdir -p "$ROOT"
+          git clone --quiet --depth 1 --branch "$BRANCH" "https://github.com/$GITHUB_REPOSITORY.git" "$ROOT/flutter"
+          git -C "$ROOT/flutter" log --oneline -1
+
+      - name: depot_tools
+        run: |
+          git clone --quiet --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$ROOT/depot_tools"
+          echo "$ROOT/depot_tools" >> "$GITHUB_PATH"
+
+      - name: gclient sync
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          cat > .gclient <<'EOF'
+          solutions = [
+            {
+              "custom_deps": {},
+              "deps_file": "DEPS",
+              "managed": False,
+              "name": ".",
+              "safesync_url": "",
+              "url": "https://github.com/flutter/flutter.git",
+              "custom_vars": {
+                "download_android_deps": False,
+                "download_fuchsia_deps": False,
+                "download_jdk": False,
+                "download_esbuild": False,
+              },
+            },
+          ]
+          EOF
+          gclient sync -D --no-history --shallow
+          df -h /
+
+      - name: Build identity
+        working-directory: ${{ env.ROOT }}/flutter
+        run: REELX_FLUTTER_VERSION="$FLUTTER_VERSION" reelx/tools/write_build_info.sh dev
+
+      - name: Build (ios_${{ matrix.mode }})
+        id: build
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          python3 engine/src/flutter/tools/gn --ios --runtime-mode ${{ matrix.mode }} --no-rbe --no-goma
+          start=$(date +%s)
+          third_party/ninja/ninja -C "$OUT" flutter/shell/platform/darwin/ios:flutter_framework
+          echo "build took $(( ($(date +%s) - start) / 60 )) min"
+          find "$OUT/Flutter.xcframework" -maxdepth 2
+          df -h /
+
+      - name: Exported C functions
+        if: steps.build.outcome == 'success'
+        run: |
+          want="ReelxEngineInfo ReelxSetFeature ReelxImageReadbackToFd ReelxRepeatLastToFd ReelxReleaseFd ReelxRegisterShaderBytes ReelxUnregisterShaderBytes"
+          bin=$(find "$OUT/Flutter.xcframework" -path '*/Flutter.framework/Flutter' -type f | head -1)
+          [ -n "$bin" ] || { echo "::error::no Flutter.framework in the xcframework"; exit 1; }
+          lipo -info "$bin"
+          have=$(nm -gU "$bin" | awk '{print $3}' | sed 's/^_//' | grep '^Reelx' | sort | tr '\n' ' ')
+          echo "Flutter: $have"
+          failed=0
+          for f in $want; do
+            case " $have " in *" $f "*) ;; *) echo "::error::Flutter does not export $f"; failed=1 ;; esac
+          done
+          exit $failed
+
+      - name: Package
+        working-directory: ${{ env.ROOT }}/flutter
+        run: |
+          python3 reelx/tools/package_artifacts.py assets --platform ios --part app \
+            --out-dir engine/src/out --dest "$ROOT/dist" --cpu arm64
+          ls -la "$ROOT/dist"
+
+      - name: Upload the engine
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flutter-${{ matrix.mode }}.xcframework
+          path: ${{ env.ROOT }}/dist/Flutter-${{ matrix.mode }}.xcframework.zip
+          retention-days: 14

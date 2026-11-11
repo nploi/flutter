@@ -91,6 +91,34 @@ class AssetsTest(unittest.TestCase):
       link = z.getinfo('FlutterMacOS.framework/FlutterMacOS')
       self.assertTrue(stat.S_ISLNK(link.external_attr >> 16), 'symlinks kept')
 
+  def test_android_libraries_take_their_apk_path(self):
+    for mode in ('release', 'profile'):
+      folder = os.path.join(self.out, f'android_{mode}_arm64')
+      write(os.path.join(folder, 'lib.stripped', 'libflutter.so'), f'stripped {mode}')
+      write(os.path.join(folder, 'libflutter.so'), 'with symbols')  # never shipped
+    made = pa.assets('android', self.out, self.dest, cpu='arm64')
+    self.assertEqual(made, ['libflutter-release-android-arm64.zip',
+                            'libflutter-profile-android-arm64.zip'])
+    with zipfile.ZipFile(os.path.join(self.dest, made[0])) as z:
+      self.assertEqual(z.namelist(), ['lib/arm64-v8a/libflutter.so'])
+      self.assertEqual(z.read('lib/arm64-v8a/libflutter.so'), b'stripped release')
+
+  @unittest.skipUnless(shutil.which('zip'), 'needs zip')
+  def test_ios_packages_the_mode_it_built(self):
+    write(os.path.join(self.out, 'ios_profile', 'Flutter.xcframework', 'Info.plist'), 'plist')
+    write(os.path.join(self.out, 'ios_profile', 'Flutter.xcframework', 'ios-arm64',
+                       'Flutter.framework', 'Flutter'), 'engine')
+    made = pa.assets('ios', self.out, self.dest, cpu='arm64', part='app')
+    self.assertEqual(made, ['Flutter-profile.xcframework.zip'])
+    self.assertIn('Flutter.xcframework/ios-arm64/Flutter.framework/Flutter', self.names(made[0]))
+
+  def test_phones_have_no_engine_folder(self):
+    write(os.path.join(self.out, 'android_release_arm64', 'lib.stripped', 'libflutter.so'), 'e')
+    with self.assertRaises(pa.PackageError):
+      pa.assets('android', self.out, self.dest, cpu='arm64', part='engine-folder')
+    with self.assertRaises(pa.PackageError):
+      pa.assets('ios', self.out, self.dest)  # nothing built
+
   def test_parts_package_separately(self):
     write(os.path.join(self.out, 'host_release', 'libflutter_linux_gtk.so'), 'engine')
     self.assertEqual(pa.assets('linux', self.out, self.dest, part='app'),
