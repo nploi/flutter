@@ -45,6 +45,13 @@ if [[ $sync -eq 1 || ! -d "$src/flutter/third_party/dart" ]]; then
   gclient sync -D
 fi
 
+# The engine's LLVM can't link against the macOS 27 SDK (Xcode 27): its .tbd
+# files list arm64e.x1. A macOS 26 SDK (the Command Line Tools keep one) works.
+if compgen -G "$src/flutter/prebuilts/SDKs/MacOSX27*.sdk" >/dev/null; then
+  die "the sync linked the macOS 27 SDK, which this engine can't link with;" \
+    "see reelx/ENGINE_SETUP.md › Troubleshooting (link a MacOSX26 SDK instead)"
+fi
+
 # Identity reported by ReelxEngineInfo (lib/ui/reelx/reelx_ffi.cc).
 "$root/reelx/tools/write_build_info.sh" "${REELX_PATCH_SET:-dev}"
 

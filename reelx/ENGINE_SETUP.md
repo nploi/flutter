@@ -181,6 +181,9 @@ Then pin the release in the editor (`tool/release/engine/ENGINE_VERSION`) in its
 | Symptom | Cause and fix |
 |---|---|
 | `Path "...Windows Kits\10\include\10.0.22621.0\um" ... does not exist` | Install Windows SDK 10.0.22621.0 (Visual Studio Installer → Individual components). |
+| Xcode 27: `ld64.lld: error: could not load TAPI file at .../MacOSX27.2.sdk/usr/lib/libSystem.tbd: malformed file` (`unknown architecture`), and before that `'stack_protector_ignore' attribute ignored` in ANGLE | The engine's LLVM can't read the macOS 27 SDK (its `.tbd` files list `arm64e.x1`, and its `os_log` macros warn under `-fstack-protector-all`). Build with a macOS 26 SDK: the Command Line Tools keep one. Replace the sync's link, then run `gn` again: `cd engine/src/flutter/prebuilts/SDKs && rm MacOSX27*.sdk && ln -s /Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk MacOSX26.5.sdk` (`gclient sync` puts the Xcode SDK back). |
+| Xcode 27: `cannot execute tool 'metal' due to missing Metal Toolchain` | `xcodebuild -downloadComponent MetalToolchain` (about 840 MB). |
+| A Mac swaps hard while linking (16–24 GB) | Each LTO link takes a few GB; link the many test binaries at `-j 2` (`ninja -j 2 ...` after the objects are built). |
 | `/usr/bin/env: 'vpython3': No such file` on `git rebase`/`push` | The checkout's git hooks need depot_tools on `PATH`. |
 | `flutter test --local-engine` can't find the Dart SDK | Link `dart-sdk` into the build folder (step 2). |
 | Impeller tests hang or abort on a Linux machine without a GPU | Use Skia (the CLI's default on Linux) or OpenGL ES; Vulkan needs a real driver. |
