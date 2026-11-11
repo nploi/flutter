@@ -131,6 +131,59 @@ The app is built with the stock SDK, then its engine is replaced. The release la
 
 Status: the macOS swap is covered by the lane's tests but not yet run on a Mac; the Linux and Windows swaps by hand are not yet checked. An app built with another Flutter version than the engine's will not start.
 
+### On a phone (Android and iOS)
+
+Build the app with the stock Flutter 3.47.9 in the engine's mode (release or profile), then put the engine in. Neither way is checked on a phone yet.
+
+**Android**: replace the library inside the APK, stored uncompressed and page-aligned as Android loads it, and sign the APK again:
+
+```sh
+flutter build apk --release --target-platform android-arm64
+unzip libflutter-release-android-arm64.zip           # lib/arm64-v8a/libflutter.so
+cp build/app/outputs/flutter-apk/app-release.apk app.apk
+zip -0 app.apk lib/arm64-v8a/libflutter.so           # replaces the stock one
+BT=$ANDROID_HOME/build-tools/<version>               # 35 or later for -P 16
+$BT/zipalign -f -P 16 4 app.apk app-aligned.apk
+$BT/apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android --out app-engine.apk app-aligned.apk
+adb install -r app-engine.apk
+```
+
+Impeller picks Vulkan where the phone has it. To run the OpenGL ES paths there, add to `<application>` in `android/app/src/main/AndroidManifest.xml`:
+
+```xml
+<meta-data android:name="io.flutter.embedding.android.ImpellerBackend" android:value="opengles" />
+```
+
+**iOS**: put the engine in the SDK's cache before building, so Xcode signs the app as usual:
+
+```sh
+cache="$(dirname "$(which flutter)")/cache/artifacts/engine/ios-release"   # ios-profile for profile
+mv "$cache/Flutter.xcframework" "$cache/Flutter.xcframework.stock"
+unzip -q Flutter-release.xcframework.zip -d "$cache"
+flutter run --release                                 # or flutter build ipa
+```
+
+The engine has only the device slice: building that mode for a simulator fails until the stock one is back (`rm -rf "$cache/Flutter.xcframework" && mv "$cache/Flutter.xcframework.stock" "$cache/Flutter.xcframework"`).
+
+### Builds from CI
+
+The "Engine" workflow (`.github/workflows/engine.yml`) builds every push to `engine-perf/*-wip` and every pull request into it, and keeps the builds 14 days as run artifacts, one zip each:
+
+| Artifact | Contents |
+|---|---|
+| `engine-folder-linux-x64`, `engine-folder-macos-arm64`, `engine-folder-windows-x64` | the engine folder (`out/host_debug`, from an unoptimized build) for `reelx render` and `flutter test` |
+| `libflutter-release-android-arm64`, `libflutter-profile-android-arm64` | `lib/arm64-v8a/libflutter.so` |
+| `Flutter-release.xcframework`, `Flutter-profile.xcframework` | `Flutter.xcframework` for iOS devices |
+
+```sh
+repo=<owner>/flutter
+run=$(gh run list --repo $repo --workflow engine.yml --branch engine-perf/3.47.9-wip \
+  --limit 1 --json databaseId --jq '.[0].databaseId')     # a pull request's run: its branch
+gh run download "$run" --repo $repo --name libflutter-release-android-arm64
+```
+
+To build only some platforms or phone modes, run it by hand: `gh workflow run engine.yml --repo $repo --ref <branch> -f linux=false -f macos=false -f windows=false -f mobile_modes=release` (or "Run workflow" in the Actions tab).
+
 ## 4. Check that it is the patched engine
 
 Exported functions (seven, all starting with `Reelx`):
@@ -139,6 +192,8 @@ Exported functions (seven, all starting with `Reelx`):
 nm -D --defined-only engine/src/out/host_debug/flutter_tester | grep Reelx             # Linux
 nm -gU engine/src/out/host_debug_arm64/flutter_tester | grep Reelx                     # macOS
 # Windows: engine\src\flutter\buildtools\windows-x64\clang\bin\llvm-readobj.exe --coff-exports flutter_windows.dll
+engine/src/flutter/buildtools/linux-x64/clang/bin/llvm-nm -D --defined-only lib/arm64-v8a/libflutter.so | grep Reelx   # Android
+nm -gU Flutter.xcframework/ios-arm64/Flutter.framework/Flutter | grep Reelx              # iOS
 ```
 
 From Dart, in a test run on the engine:
@@ -172,7 +227,7 @@ git push origin engine-3.47.9-ext.1
 3. **macos-universal** merges the two CPUs' frameworks into the universal one.
 4. **finalize** writes `manifest.json` and `SHA256SUMS` over every asset.
 
-Nothing is public until you publish the draft: `gh release edit engine-3.47.9-ext.1 --repo nploi/flutter --draft=false`. Assets are never replaced; to rebuild, delete the draft and push the tag again. Android and iOS assets are not built yet.
+Nothing is public until you publish the draft: `gh release edit engine-3.47.9-ext.1 --repo nploi/flutter --draft=false`. Assets are never replaced; to rebuild, delete the draft and push the tag again. Android and iOS engines are not release assets yet; the "Engine" workflow's run artifacts have them (see "Builds from CI").
 
 Then pin the release in the editor (`tool/release/engine/ENGINE_VERSION`) in its own PR, and on a machine install the engine folder with `fetch_engine.sh --engine-folder`.
 
@@ -190,4 +245,4 @@ Then pin the release in the editor (`tool/release/engine/ENGINE_VERSION`) in its
 | The app crashes at start after a swap | The engine and the SDK that built the app differ: both must be 3.47.9. |
 | `ShaderBytes.isSupported` is false | The engine isn't the patched one, or on Android/Windows an older Reelx that looked in the wrong library (fixed in reelx `engineLibrary()`). |
 
-CI builds and tests the patches on every push to `engine-perf/*-wip`: see the "Engine (macOS)", "Engine (Linux)" and "Engine (Windows)" workflows in this repository's Actions tab.
+CI builds and tests the patches on every push to `engine-perf/*-wip` and every pull request into it: the "Engine" workflow in this repository's Actions tab, one job per platform (see "Builds from CI").
