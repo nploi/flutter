@@ -467,6 +467,25 @@ std::shared_ptr<Texture> DisplayListToTexture(
     bool* attachments_hit = nullptr,
     bool single_sample = false);
 
+/// Reelx P2a/P14: the target a snapshot of [size] draws into. With
+/// [pooled_target] its colour texture comes from [pool] when one of an
+/// earlier snapshot is free ([pool_hit] says so); with [pooled_attachments]
+/// it draws with the depth/stencil (and, where MSAA resolves explicitly, the
+/// MSAA colour) textures [pool] keeps for its size and format
+/// ([attachments_hit] says whether they were kept from before). Invalid when
+/// a texture can't be made.
+RenderTarget MakeSnapshotTarget(const Context& context,
+                                SnapshotTargetPool& pool,
+                                ISize size,
+                                int mip_count,
+                                bool msaa,
+                                std::optional<PixelFormat> target_pixel_format,
+                                bool lossless_target,
+                                bool pooled_target,
+                                bool* pool_hit,
+                                bool pooled_attachments,
+                                bool* attachments_hit);
+
 /// Reelx P16: whether every draw in [display_list] is a fill of a rectangle
 /// whose edges are on pixel boundaries (rectangles with integral coordinates,
 /// paint and colour fills), with no transform, clip, layer, stroke, mask or

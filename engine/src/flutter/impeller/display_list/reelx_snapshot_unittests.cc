@@ -29,6 +29,7 @@
 #include "impeller/display_list/dl_image_impeller.h"
 #include "impeller/display_list/lazy_mipmaps.h"
 #include "impeller/renderer/command_buffer.h"
+#include "impeller/renderer/testing/mocks.h"
 
 namespace impeller {
 namespace testing {
@@ -868,6 +869,152 @@ TEST_P(AiksTest, ReelxLazySnapshotDrawnAtItsSizeMakesNoCopy) {
   DrawnSmall(GetContext(), renderer, lazy,
              flutter::DlImageSampling::kMipmapLinear);
   EXPECT_NE(lazy->GetLazyMipmapped(), nullptr);
+}
+
+// Reelx P14: a context whose MSAA resolves explicitly or, like OpenGL
+// ES with EXT_multisampled_render_to_texture, implicitly, and an allocator
+// that records the textures it makes.
+class SnapshotTargetContext {
+ public:
+  explicit SnapshotTargetContext(bool implicit_msaa)
+      : context_(std::make_shared<::testing::NiceMock<MockImpellerContext>>()),
+        allocator_(std::make_shared<::testing::NiceMock<MockAllocator>>()) {
+    using ::testing::Return;
+    auto capabilities =
+        std::make_shared<::testing::NiceMock<MockCapabilities>>();
+    ON_CALL(*capabilities, SupportsOffscreenMSAA).WillByDefault(Return(true));
+    ON_CALL(*capabilities, SupportsImplicitResolvingMSAA)
+        .WillByDefault(Return(implicit_msaa));
+    ON_CALL(*capabilities, GetDefaultColorFormat)
+        .WillByDefault(Return(PixelFormat::kR8G8B8A8UNormInt));
+    ON_CALL(*capabilities, GetDefaultDepthStencilFormat)
+        .WillByDefault(Return(PixelFormat::kD24UnormS8Uint));
+    ON_CALL(*capabilities, GetDefaultStencilFormat)
+        .WillByDefault(Return(PixelFormat::kS8UInt));
+    capabilities_ = capabilities;
+    ON_CALL(*context_, GetCapabilities)
+        .WillByDefault(::testing::ReturnRef(capabilities_));
+    ON_CALL(*context_, GetResourceAllocator).WillByDefault(Return(allocator_));
+    ON_CALL(*allocator_, GetMaxTextureSizeSupported)
+        .WillByDefault(Return(ISize(4096, 4096)));
+    ON_CALL(*allocator_, OnCreateTexture)
+        .WillByDefault([this](const TextureDescriptor& desc, bool) {
+          auto texture =
+              std::make_shared<::testing::NiceMock<MockTexture>>(desc);
+          ON_CALL(*texture, IsValid).WillByDefault(Return(true));
+          ON_CALL(*texture, GetSize).WillByDefault(Return(desc.size));
+          made.push_back(desc);
+          return texture;
+        });
+  }
+
+  RenderTarget Make(SnapshotTargetPool& pool,
+                    bool* pool_hit,
+                    bool* attachments_hit) {
+    *pool_hit = false;
+    *attachments_hit = false;
+    return MakeSnapshotTarget(*context_, pool, ISize(64, 32), /*mip_count=*/1,
+                              /*msaa=*/true, std::nullopt,
+                              /*lossless_target=*/false,
+                              /*pooled_target=*/true, pool_hit,
+                              /*pooled_attachments=*/true, attachments_hit);
+  }
+
+  /// Descriptors of the textures made, in order.
+  std::vector<TextureDescriptor> made;
+
+ private:
+  std::shared_ptr<MockImpellerContext> context_;
+  std::shared_ptr<MockAllocator> allocator_;
+  std::shared_ptr<const Capabilities> capabilities_;
+};
+
+std::shared_ptr<Texture> DepthStencilOf(const RenderTarget& target) {
+  return target.GetDepthAttachment().has_value()
+             ? target.GetDepthAttachment()->texture
+             : nullptr;
+}
+
+TEST(ReelxSnapshotTargetTest, ImplicitMsaaPoolsTheSnapshotItself) {
+  SnapshotTargetContext context(/*implicit_msaa=*/true);
+  SnapshotTargetPool pool;
+  bool pool_hit = false;
+  bool attachments_hit = false;
+
+  std::shared_ptr<Texture> first;
+  std::shared_ptr<Texture> depth_stencil;
+  {
+    RenderTarget target = context.Make(pool, &pool_hit, &attachments_hit);
+    ASSERT_TRUE(target.IsValid());
+    EXPECT_FALSE(pool_hit);
+    EXPECT_FALSE(attachments_hit);
+    const ColorAttachment& color = target.GetColorAttachment(0);
+    // The multisample texture is the snapshot: drawn into and resolved into.
+    EXPECT_EQ(color.texture, color.resolve_texture);
+    EXPECT_EQ(color.texture->GetTextureDescriptor().type,
+              TextureType::kTexture2DMultisample);
+    first = target.GetRenderTargetTexture();
+    depth_stencil = DepthStencilOf(target);
+    ASSERT_TRUE(depth_stencil);
+  }
+  // The snapshot texture and the depth/stencil, and no resolve texture
+  // that would go unused.
+  ASSERT_EQ(context.made.size(), 2u);
+  EXPECT_EQ(context.made[0].type, TextureType::kTexture2DMultisample);
+  EXPECT_TRUE(IsDepthWritable(context.made[1].format));
+  ASSERT_EQ(pool.attachments.size(), 1u);
+  EXPECT_EQ(pool.attachments[0].color_msaa, nullptr)
+      << "the snapshot is not kept as another snapshot's MSAA texture";
+
+  // Once nothing holds the snapshot, the next one draws into it again with
+  // the same depth/stencil, and makes nothing.
+  first.reset();
+  {
+    RenderTarget target = context.Make(pool, &pool_hit, &attachments_hit);
+    ASSERT_TRUE(target.IsValid());
+    EXPECT_TRUE(pool_hit);
+    EXPECT_TRUE(attachments_hit);
+    EXPECT_EQ(DepthStencilOf(target), depth_stencil);
+    first = target.GetRenderTargetTexture();
+  }
+  EXPECT_EQ(context.made.size(), 2u);
+
+  // While a snapshot is held the next one gets a texture of its own, still
+  // with the shared depth/stencil.
+  RenderTarget next = context.Make(pool, &pool_hit, &attachments_hit);
+  ASSERT_TRUE(next.IsValid());
+  EXPECT_FALSE(pool_hit);
+  EXPECT_TRUE(attachments_hit);
+  EXPECT_NE(next.GetRenderTargetTexture(), first);
+  EXPECT_EQ(DepthStencilOf(next), depth_stencil);
+  EXPECT_EQ(context.made.size(), 3u);
+}
+
+TEST(ReelxSnapshotTargetTest, ExplicitMsaaPoolsTheResolveAndTheAttachments) {
+  SnapshotTargetContext context(/*implicit_msaa=*/false);
+  SnapshotTargetPool pool;
+  bool pool_hit = false;
+  bool attachments_hit = false;
+
+  std::shared_ptr<Texture> color_msaa;
+  {
+    RenderTarget target = context.Make(pool, &pool_hit, &attachments_hit);
+    ASSERT_TRUE(target.IsValid());
+    const ColorAttachment& color = target.GetColorAttachment(0);
+    EXPECT_NE(color.texture, color.resolve_texture);
+    color_msaa = color.texture;
+  }
+  // Resolve, MSAA colour, depth/stencil.
+  EXPECT_EQ(context.made.size(), 3u);
+  ASSERT_EQ(pool.attachments.size(), 1u);
+  EXPECT_EQ(pool.attachments[0].color_msaa, color_msaa);
+
+  RenderTarget target = context.Make(pool, &pool_hit, &attachments_hit);
+  ASSERT_TRUE(target.IsValid());
+  EXPECT_TRUE(pool_hit);
+  EXPECT_TRUE(attachments_hit);
+  EXPECT_EQ(target.GetColorAttachment(0).texture, color_msaa);
+  EXPECT_EQ(context.made.size(), 3u);
 }
 
 TEST(ReelxLazyMipmapsTest, ImageRectNeverMinifies) {

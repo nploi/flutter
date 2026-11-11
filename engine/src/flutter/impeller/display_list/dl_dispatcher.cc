@@ -1353,8 +1353,12 @@ uint64_t AttachFromPool(SnapshotTargetPool& pool,
       context, *context.GetResourceAllocator(), attachments.size, msaa,
       "ImpellerOnscreen", Canvas::GetRootStencilConfig(),
       attachments.depth_stencil);
+  // Where MSAA resolves implicitly the multisample texture is the snapshot
+  // itself, so only the depth/stencil texture is kept.
   std::shared_ptr<Texture> color_msaa =
-      msaa ? target.GetColorAttachment(0).texture : nullptr;
+      msaa && !context.GetCapabilities()->SupportsImplicitResolvingMSAA()
+          ? target.GetColorAttachment(0).texture
+          : nullptr;
   std::shared_ptr<Texture> depth_stencil =
       target.GetDepthAttachment().has_value()
           ? target.GetDepthAttachment()->texture
@@ -1472,6 +1476,142 @@ bool DrawsOnlyPixelAlignedFills(const flutter::DisplayList& display_list) {
   return true;
 }
 
+RenderTarget MakeSnapshotTarget(const Context& context,
+                                SnapshotTargetPool& pool,
+                                ISize size,
+                                int mip_count,
+                                bool msaa,
+                                std::optional<PixelFormat> target_pixel_format,
+                                bool lossless_target,
+                                bool pooled_target,
+                                bool* pool_hit,
+                                bool pooled_attachments,
+                                bool* attachments_hit) {
+  // Reelx P3: offscreen MSAA resolve textures are lossy-compressed on GPUs
+  // that support it (Apple family 8+), which changes pixel bytes slightly.
+  // A lossless target keeps the snapshot exactly as rendered, for callers
+  // that read it back bit for bit.
+  // Reelx P2a: a pooled target reuses a texture of an earlier snapshot
+  // nothing holds any more. Only one-level targets: a reused texture's
+  // mipmaps wouldn't be generated again.
+  pooled_target = pooled_target && mip_count == 1;
+  // Reelx P14: with pooled attachments the target also draws with the MSAA
+  // colour and depth/stencil textures of the snapshot of this size before
+  // it. Where MSAA resolves implicitly (OpenGL ES with
+  // EXT_multisampled_render_to_texture) the multisample texture is the
+  // snapshot itself: it is the pooled target there, and only the
+  // depth/stencil texture is shared.
+  const bool implicit_msaa =
+      msaa && context.GetCapabilities()->SupportsImplicitResolvingMSAA();
+  const PixelFormat format = target_pixel_format.value_or(
+      context.GetCapabilities()->GetDefaultColorFormat());
+  SnapshotAttachments* attachments = nullptr;
+  if (pooled_attachments && msaa) {
+    attachments = &AttachmentsFromPool(pool, size, format);
+    if (attachments_hit) {
+      *attachments_hit = attachments->id != 0;
+    }
+  } else if (!pooled_attachments) {
+    pool.attachments.clear();
+  }
+  // A single-sample snapshot leaves the sets of the MSAA snapshots alone.
+  pooled_attachments = attachments != nullptr;
+  if (pooled_target || pooled_attachments) {
+    pool.frames_since_snapshot = 0;
+  }
+  Allocator& allocator = *context.GetResourceAllocator();
+  std::shared_ptr<Texture> color_target;
+  if (implicit_msaa) {
+    if (pooled_target) {
+      // The multisample texture CreateOffscreenMSAA would make.
+      TextureDescriptor desc;
+      desc.storage_mode = StorageMode::kDevicePrivate;
+      desc.type = TextureType::kTexture2DMultisample;
+      desc.sample_count = SampleCount::kCount4;
+      desc.format = format;
+      desc.size = size;
+      desc.usage = TextureUsage::kRenderTarget;
+      color_target = TargetFromPool(pool, allocator, desc, pool_hit);
+    }
+  } else if ((lossless_target && msaa) || pooled_target) {
+    TextureDescriptor desc;
+    desc.storage_mode =
+        msaa ? impeller::RenderTarget::kDefaultColorAttachmentConfigMSAA
+                   .resolve_storage_mode
+             : impeller::RenderTarget::kDefaultColorAttachmentConfig
+                   .storage_mode;
+    desc.format = format;
+    desc.size = size;
+    desc.compression_type = (msaa && !lossless_target)
+                                ? CompressionType::kLossy
+                                : CompressionType::kLossless;
+    desc.usage = TextureUsage::kRenderTarget | TextureUsage::kShaderRead;
+    desc.mip_count = mip_count;
+    color_target = pooled_target
+                       ? TargetFromPool(pool, allocator, desc, pool_hit)
+                       : allocator.CreateTexture(desc);
+  }
+  // Do not use the render target cache as the lifecycle of this texture
+  // will outlive a particular frame.
+  impeller::RenderTargetAllocator render_target_allocator =
+      impeller::RenderTargetAllocator(context.GetResourceAllocator());
+  impeller::RenderTarget target;
+  if (msaa) {
+    // With implicit MSAA the pooled target serves as both: the resolve
+    // texture CreateOffscreenMSAA would make otherwise goes unused there.
+    std::shared_ptr<Texture> color_msaa =
+        implicit_msaa ? color_target
+                      : (attachments ? attachments->color_msaa : nullptr);
+    target = render_target_allocator.CreateOffscreenMSAA(
+        context,  // context
+        size,     // size
+        /*mip_count=*/mip_count,
+        "Picture Snapshot MSAA",  // label
+        impeller::RenderTarget::
+            kDefaultColorAttachmentConfigMSAA,  // color_attachment_config
+        std::nullopt,                           // stencil_attachment_config
+        color_msaa,                             // existing_color_msaa_texture
+        color_target,        // existing_color_resolve_texture
+        nullptr,             // existing_depth_stencil_texture
+        target_pixel_format  // target_format
+    );
+  } else {
+    target = render_target_allocator.CreateOffscreen(
+        context,  // context
+        size,     // size
+        /*mip_count=*/mip_count,
+        "Picture Snapshot",  // label
+        impeller::RenderTarget::
+            kDefaultColorAttachmentConfig,  // color_attachment_config
+        std::nullopt,                       // stencil_attachment_config
+        color_target,                       // existing_color_texture
+        nullptr,                            // existing_depth_stencil_texture
+        target_pixel_format                 // target_format
+    );
+  }
+  if (!target.IsValid()) {
+    return {};
+  }
+  const uint64_t attachments_id =
+      attachments ? AttachFromPool(pool, *attachments, context, target, msaa)
+                  : 0;
+  if (pooled_target) {
+    // The framebuffer the backend cached for a reused target points at the
+    // MSAA and depth/stencil textures of the snapshot that made it. It
+    // stays only when this snapshot draws with those same textures.
+    for (SnapshotTarget& pooled : pool.targets) {
+      if (pooled.texture == color_target) {
+        if (attachments_id == 0 || pooled.attachments_id != attachments_id) {
+          pooled.texture->ForgetRenderTargetCaches();
+        }
+        pooled.attachments_id = attachments_id;
+        break;
+      }
+    }
+  }
+  return target;
+}
+
 std::shared_ptr<Texture> DisplayListToTexture(
     const sk_sp<flutter::DisplayList>& display_list,
     ISize size,
@@ -1504,115 +1644,13 @@ std::shared_ptr<Texture> DisplayListToTexture(
       !single_sample &&
       context.GetContext()->GetCapabilities()->SupportsOffscreenMSAA() &&
       PixelFormatSupportsMSAA(target_pixel_format);
-  // Reelx P3: offscreen MSAA resolve textures are lossy-compressed on GPUs
-  // that support it (Apple family 8+), which changes pixel bytes slightly.
-  // A lossless target keeps the snapshot exactly as rendered, for callers
-  // that read it back bit for bit.
-  // Reelx P2a: a pooled target reuses a texture of an earlier snapshot
-  // nothing holds any more. Only one-level targets: a reused texture's
-  // mipmaps wouldn't be generated again.
-  pooled_target = pooled_target && mip_count == 1;
-  // Reelx P14: with pooled attachments the target also draws with the MSAA
-  // colour and depth/stencil textures of the snapshot of this size before
-  // it. Not where MSAA resolves implicitly (OpenGL ES with
-  // EXT_multisampled_render_to_texture): there the MSAA texture is the
-  // snapshot itself.
-  pooled_attachments =
-      pooled_attachments &&
-      !context.GetContext()->GetCapabilities()->SupportsImplicitResolvingMSAA();
-  const PixelFormat format = target_pixel_format.value_or(
-      context.GetContext()->GetCapabilities()->GetDefaultColorFormat());
-  SnapshotTargetPool& pool =
-      context.GetContentContext().GetSnapshotTargetPool();
-  SnapshotAttachments* attachments = nullptr;
-  if (pooled_attachments && msaa) {
-    attachments = &AttachmentsFromPool(pool, size, format);
-    if (attachments_hit) {
-      *attachments_hit = attachments->id != 0;
-    }
-  } else if (!pooled_attachments) {
-    pool.attachments.clear();
-  }
-  // A single-sample snapshot leaves the sets of the MSAA snapshots alone.
-  pooled_attachments = attachments != nullptr;
-  if (pooled_target || pooled_attachments) {
-    pool.frames_since_snapshot = 0;
-  }
-  std::shared_ptr<Texture> color_target;
-  if ((lossless_target && msaa) || pooled_target) {
-    TextureDescriptor desc;
-    desc.storage_mode =
-        msaa ? impeller::RenderTarget::kDefaultColorAttachmentConfigMSAA
-                   .resolve_storage_mode
-             : impeller::RenderTarget::kDefaultColorAttachmentConfig
-                   .storage_mode;
-    desc.format = format;
-    desc.size = size;
-    desc.compression_type = (msaa && !lossless_target)
-                                ? CompressionType::kLossy
-                                : CompressionType::kLossless;
-    desc.usage = TextureUsage::kRenderTarget | TextureUsage::kShaderRead;
-    desc.mip_count = mip_count;
-    Allocator& allocator = *context.GetContext()->GetResourceAllocator();
-    color_target = pooled_target
-                       ? TargetFromPool(pool, allocator, desc, pool_hit)
-                       : allocator.CreateTexture(desc);
-  }
-  // Do not use the render target cache as the lifecycle of this texture
-  // will outlive a particular frame.
-  impeller::RenderTargetAllocator render_target_allocator =
-      impeller::RenderTargetAllocator(
-          context.GetContext()->GetResourceAllocator());
-  impeller::RenderTarget target;
-  if (msaa) {
-    target = render_target_allocator.CreateOffscreenMSAA(
-        *context.GetContext(),  // context
-        size,                   // size
-        /*mip_count=*/mip_count,
-        "Picture Snapshot MSAA",  // label
-        impeller::RenderTarget::
-            kDefaultColorAttachmentConfigMSAA,  // color_attachment_config
-        std::nullopt,                           // stencil_attachment_config
-        attachments ? attachments->color_msaa
-                    : nullptr,  // existing_color_msaa_texture
-        color_target,           // existing_color_resolve_texture
-        nullptr,                // existing_depth_stencil_texture
-        target_pixel_format     // target_format
-    );
-  } else {
-    target = render_target_allocator.CreateOffscreen(
-        *context.GetContext(),  // context
-        size,                   // size
-        /*mip_count=*/mip_count,
-        "Picture Snapshot",  // label
-        impeller::RenderTarget::
-            kDefaultColorAttachmentConfig,  // color_attachment_config
-        std::nullopt,                       // stencil_attachment_config
-        color_target,                       // existing_color_texture
-        nullptr,                            // existing_depth_stencil_texture
-        target_pixel_format                 // target_format
-    );
-  }
+  impeller::RenderTarget target = MakeSnapshotTarget(
+      *context.GetContext(),
+      context.GetContentContext().GetSnapshotTargetPool(), size, mip_count,
+      msaa, target_pixel_format, lossless_target, pooled_target, pool_hit,
+      pooled_attachments, attachments_hit);
   if (!target.IsValid()) {
     return nullptr;
-  }
-  const uint64_t attachments_id =
-      attachments ? AttachFromPool(pool, *attachments, *context.GetContext(),
-                                   target, msaa)
-                  : 0;
-  if (pooled_target) {
-    // The framebuffer the backend cached for a reused target points at the
-    // MSAA and depth/stencil textures of the snapshot that made it. It
-    // stays only when this snapshot draws with those same textures.
-    for (SnapshotTarget& pooled : pool.targets) {
-      if (pooled.texture == color_target) {
-        if (attachments_id == 0 || pooled.attachments_id != attachments_id) {
-          pooled.texture->ForgetRenderTargetCaches();
-        }
-        pooled.attachments_id = attachments_id;
-        break;
-      }
-    }
   }
 
   // Reelx P13: from here to the cleanup below the snapshot emplaces into
